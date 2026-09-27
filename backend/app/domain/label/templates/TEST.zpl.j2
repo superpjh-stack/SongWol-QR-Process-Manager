@@ -1,0 +1,12 @@
+{#- 프린터 테스트 라벨 (POST /printers/{id}/test). label_template 테이블에 없다 — 파일 고정. -#}
+^XA
+^CI28
+^PW812
+^LL406
+^FO24,24^BQN,2,5,M^FDMA,{{ qr_url }}^FS
+^FO300,40^A0N,48,48^FDSONGWOL QR TEST^FS
+^FO300,110^A0N,34,34^FD{{ printer_id }} {{ printer_name }}^FS
+^FO300,160^A0N,30,30^FD{{ host }}:{{ port }}^FS
+^FO300,210^A0N,30,30^FD한글 출력 확인 — 가나다라^FS
+^FO300,260^A0N,26,26^FD{{ printed_at }}^FS
+^XZ

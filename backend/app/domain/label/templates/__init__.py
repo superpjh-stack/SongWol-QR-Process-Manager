@@ -1,4 +1,7 @@
-"""기본 라벨 양식 (Jinja2). 리비전 0005 가 label_template 테이블 시드로 적재한다."""
+"""기본 라벨 양식 (Jinja2). 리비전 0005 가 label_template 테이블 시드로 적재한다.
+
+``TEST.zpl.j2`` 는 프린터 테스트 라벨 — 테이블 CHECK(4종) 밖이라 파일로만 둔다.
+"""
 
 from pathlib import Path
 
@@ -12,8 +15,14 @@ DEFAULT_TEMPLATES: dict[str, tuple[str, str]] = {
     "WORKER_CARD": ("ZPL", "WORKER_CARD.zpl.j2"),
 }
 
+TEST_TEMPLATE_FILE = "TEST.zpl.j2"
+
 
 def load_default_template(label_type: str) -> tuple[str, str]:
     """(format, body)."""
     fmt, filename = DEFAULT_TEMPLATES[label_type]
     return fmt, (TEMPLATE_DIR / filename).read_text(encoding="utf-8")
+
+
+def load_test_template() -> str:
+    return (TEMPLATE_DIR / TEST_TEMPLATE_FILE).read_text(encoding="utf-8")

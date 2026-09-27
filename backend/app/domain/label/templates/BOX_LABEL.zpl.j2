@@ -1,11 +1,20 @@
-{#- 박스 라벨 기본 양식 (api-contract §9 「박스 라벨 내용」, admin #18 플레이스홀더). S1-6 에서 실물 검증. -#}
+{#- 박스 라벨 기본 양식 (api-contract §9 「박스 라벨 내용」: LT QR ≥ 20 mm, 거래처명, 품목명·규격·색상, 입수,
+    WO 코드, 박스 no/총수(인쇄 시점 누계), 오프라인 임시 #n). 4×3 인치. admin #18 플레이스홀더. -#}
 ^XA
 ^CI28
-^FO30,30^BQN,2,6,Q^FDQA,{{ qr_url }}^FS
-^FO260,40^A0N,36,36^FD{{ code }}^FS
-^FO260,90^A0N,28,28^FD{{ customer_name }}^FS
-^FO260,130^A0N,28,28^FD{{ item_name }} {{ spec }} {{ color }}^FS
-^FO260,170^A0N,28,28^FD입수 {{ qty }} / WO {{ wo_code }}^FS
-^FO260,210^A0N,28,28^FD박스 {{ box_no }}/{{ box_total }}{% if offline_seq %} (임시 #{{ offline_seq }}){% endif %}^FS
-^FO260,250^A0N,22,22^FD발행 {{ issue_no }}차 {{ printed_at }}^FS
+^PW812
+^LL609
+^FO24,24^BQN,2,{{ qr_mag }},{{ qr_ecc }}^FD{{ qr_ecc }}A,{{ qr_url }}^FS
+^FO24,320^A0N,26,26^FD{{ code }}^FS
+^FO320,30^A0N,52,52^FD{{ code }}^FS
+^FO320,95^A0N,30,30^FB470,1,0,L^FD{{ customer_name }}^FS
+^FO320,140^A0N,34,34^FB470,2,0,L^FD{{ item_name }}^FS
+^FO320,220^A0N,30,30^FD{{ spec or '' }} {{ color or '' }}^FS
+^FO320,265^A0N,30,30^FDWO {{ wo_code }}^FS
+^FO24,370^GB764,3,3^FS
+^FO24,390^A0N,40,40^FD입수 {{ qty }}^FS
+^FO400,390^A0N,40,40^FD박스 {{ box_no }} / {{ box_total }}^FS
+{% if offline_seq %}^FO24,450^A0N,34,34^FD임시 #{{ offline_seq }}^FS
+{% endif %}^FO24,500^GB764,3,3^FS
+^FO24,520^A0N,26,26^FD발행 {{ issue_no }}차  {{ printed_at }}^FS
 ^XZ

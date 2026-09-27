@@ -1,29 +1,115 @@
-{#- 작업지시서 PDF 기본 양식 (api-contract §9: WO 당 1페이지, WO QR 30×30 mm, 품목·규격·색상·가공방식·수량·도안·라우팅·발행 차수).
-    WeasyPrint 렌더는 S1-5. 여기서는 플레이스홀더(admin #18)만 고정한다. -#}
+{#- 작업지시서 PDF 기본 양식 (spec §6 ①, api-contract §9). WeasyPrint 가 렌더한다 (S1-5).
+    컨텍스트 = 표지(SO): code · qr_url · qr_png_uri · customer_name · order_date · due_date · lines[] · work_orders[]
+    · issue_no · printed_at · font_css. work_orders[] 각 항목 = admin #18 의 WO 플레이스홀더
+    (code · qr_url · qr_png_uri · so_code · customer_name · item_name · spec · color · print_method_name · qty_ordered
+    · due_date · design_thumbnail_path · design_thumbnail_uri · steps[](seq, process_code, process_name, std_lead_hours)
+    · std_lead_total · issue_no). WO 가 없는 SO 는 표지만 나온다. -#}
 <!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+<title>작업지시서 {{ code }}</title>
 <style>
-  @page { size: A4; margin: 15mm; }
-  body { font-family: sans-serif; font-size: 12pt; }
+  {{ font_css }}
+  @page { size: A4; margin: 14mm 14mm 16mm 14mm;
+          @bottom-right { content: "{{ code }} · " counter(page) " / " counter(pages); font-size: 9pt; color: #555; } }
+  * { box-sizing: border-box; }
+  body { font-family: "SongwolKR", "Apple SD Gothic Neo", "NanumGothic", "Noto Sans CJK KR", sans-serif;
+         font-size: 11pt; color: #111; margin: 0; }
+  h1 { font-size: 22pt; margin: 0 0 4mm 0; }
+  h2 { font-size: 16pt; margin: 0 0 3mm 0; }
+  .page { page-break-after: always; }
+  .page:last-child { page-break-after: auto; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 3mm; margin-bottom: 4mm; }
   .qr { width: 30mm; height: 30mm; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { border: 1px solid #333; padding: 4px 6px; text-align: left; }
+  .qr-box { text-align: center; font-size: 9pt; }
+  .code { font-family: "Menlo", "Courier New", monospace; font-size: 20pt; font-weight: bold; letter-spacing: 0.5px; }
+  .meta { font-size: 10pt; color: #333; margin-top: 2mm; }
+  table { border-collapse: collapse; width: 100%; margin-top: 3mm; }
+  th, td { border: 1px solid #444; padding: 2mm 2.5mm; text-align: left; vertical-align: top; font-size: 10.5pt; }
+  th { background: #eee; font-weight: 600; }
+  td.num, th.num { text-align: right; }
+  .kv { width: 100%; }
+  .kv th { width: 28mm; background: #f4f4f4; }
+  .big { font-size: 15pt; font-weight: bold; }
+  .thumb { max-width: 70mm; max-height: 50mm; border: 1px solid #999; }
+  .foot { margin-top: 4mm; font-size: 9pt; color: #555; }
+  .cols { display: flex; gap: 6mm; }
+  .cols > div { flex: 1; }
+  .badge { display: inline-block; border: 1px solid #111; padding: 0.5mm 2mm; font-size: 9pt; margin-left: 2mm; }
 </style>
 </head>
 <body>
-  <h1>작업지시서 {{ code }}</h1>
-  <img class="qr" src="{{ qr_url }}" alt="{{ code }}">
-  <p>수주 {{ so_code }} · 거래처 {{ customer_name }} · 납기 {{ due_date }}</p>
-  <p>{{ item_name }} {{ spec }} {{ color }} · {{ print_method_name }} · 수량 {{ qty_ordered }}</p>
-  {% if design_thumbnail_path %}<img src="{{ design_thumbnail_path }}" alt="도안">{% endif %}
-  <table>
-    <thead><tr><th>공정</th><th>표준 리드타임(h)</th></tr></thead>
-    <tbody>
-    {% for s in steps %}<tr><td>{{ s.process_name }}</td><td>{{ s.std_lead_hours }}</td></tr>{% endfor %}
-    </tbody>
-  </table>
-  <p>발행 {{ issue_no }}차 · {{ printed_at }}</p>
+  {#- ── 표지 (SO) ── -#}
+  <section class="page">
+    <div class="head">
+      <div>
+        <h1>작업지시서 <span class="badge">{% if issue_no %}발행 {{ issue_no }}차{% else %}미발행{% endif %}</span></h1>
+        <div class="code">{{ code }}</div>
+        <div class="meta">거래처 <b>{{ customer_name }}</b> · 수주일 {{ order_date }} · <b>납기 {{ due_date }}</b></div>
+        <div class="meta">출력 {{ printed_at }} · 작업지시 {{ work_orders | length }}건</div>
+      </div>
+      <div class="qr-box"><img class="qr" src="{{ qr_png_uri }}" alt="{{ code }}"><br>{{ code }}</div>
+    </div>
+
+    <h2>수주 라인</h2>
+    <table>
+      <thead><tr><th>#</th><th>품목</th><th>규격</th><th>색상</th><th>가공방식</th><th class="num">수량</th></tr></thead>
+      <tbody>
+      {% for l in lines %}<tr><td>{{ l.line_no }}</td><td>{{ l.item_name }}</td><td>{{ l.spec or '' }}</td><td>{{ l.color or '' }}</td><td>{{ l.print_method_name }}</td><td class="num">{{ l.qty }}</td></tr>
+      {% else %}<tr><td colspan="6">라인 없음</td></tr>{% endfor %}
+      </tbody>
+    </table>
+
+    <h2 style="margin-top:6mm">작업지시 요약</h2>
+    <table>
+      <thead><tr><th>WO</th><th>품목</th><th>가공방식</th><th class="num">수량</th><th>라우팅</th><th class="num">표준 리드타임(h)</th></tr></thead>
+      <tbody>
+      {% for w in work_orders %}<tr><td>{{ w.code }}</td><td>{{ w.item_name }}</td><td>{{ w.print_method_name }}</td><td class="num">{{ w.qty_ordered }}</td><td>{% for s in w.steps %}{{ s.process_code }}{% if not loop.last %} → {% endif %}{% endfor %}</td><td class="num">{{ w.std_lead_total }}</td></tr>
+      {% else %}<tr><td colspan="6">발행된 작업지시가 없습니다 (표지만 출력)</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    <div class="foot">QR 을 스캔하면 진행 현황 조회 페이지로 이동합니다 ({{ qr_url }}).</div>
+  </section>
+
+  {#- ── WO 마다 1쪽 ── -#}
+  {% for w in work_orders %}
+  <section class="page">
+    <div class="head">
+      <div>
+        <h1>작업지시 <span class="badge">{% if w.issue_no %}발행 {{ w.issue_no }}차{% else %}미발행{% endif %}</span></h1>
+        <div class="code">{{ w.code }}</div>
+        <div class="meta">수주 {{ w.so_code }} · 거래처 <b>{{ w.customer_name }}</b> · <b>납기 {{ w.due_date }}</b></div>
+      </div>
+      <div class="qr-box"><img class="qr" src="{{ w.qr_png_uri }}" alt="{{ w.code }}"><br>{{ w.code }}</div>
+    </div>
+    <div class="cols">
+      <div>
+        <table class="kv">
+          <tr><th>품목</th><td class="big">{{ w.item_name }}</td></tr>
+          <tr><th>규격</th><td>{{ w.spec or '-' }}</td></tr>
+          <tr><th>색상</th><td>{{ w.color or '-' }}</td></tr>
+          <tr><th>가공방식</th><td>{{ w.print_method_name }}</td></tr>
+          <tr><th>수량</th><td class="big">{{ w.qty_ordered }}</td></tr>
+          <tr><th>납기</th><td>{{ w.due_date }}</td></tr>
+        </table>
+      </div>
+      <div>
+        {% if w.design_thumbnail_uri %}<img class="thumb" src="{{ w.design_thumbnail_uri }}" alt="도안">
+        {% else %}<div style="border:1px dashed #999;padding:8mm;text-align:center;color:#777">도안 썸네일 없음</div>{% endif %}
+      </div>
+    </div>
+    <h2 style="margin-top:6mm">라우팅</h2>
+    <table>
+      <thead><tr><th>순서</th><th>공정</th><th>공정명</th><th class="num">표준 리드타임(h)</th><th>완료 확인(서명)</th></tr></thead>
+      <tbody>
+      {% for s in w.steps %}<tr><td>{{ s.seq }}</td><td>{{ s.process_code }}</td><td>{{ s.process_name }}</td><td class="num">{{ s.std_lead_hours }}</td><td></td></tr>
+      {% else %}<tr><td colspan="5">라우팅 단계 없음</td></tr>{% endfor %}
+      <tr><th colspan="3">합계</th><td class="num">{{ w.std_lead_total }}</td><td></td></tr>
+      </tbody>
+    </table>
+    <div class="foot">출력 {{ printed_at }} · {{ w.qr_url }}</div>
+  </section>
+  {% endfor %}
 </body>
 </html>

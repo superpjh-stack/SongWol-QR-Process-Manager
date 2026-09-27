@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import auth
+from app.domain.label import router as label_router
 from app.domain.master import admin_router, import_router
 from app.domain.master import router as master_router
 
@@ -11,3 +12,4 @@ api_v1.include_router(auth.router)
 api_v1.include_router(master_router.router)
 api_v1.include_router(admin_router.router)
 api_v1.include_router(import_router.router)
+api_v1.include_router(label_router.router)

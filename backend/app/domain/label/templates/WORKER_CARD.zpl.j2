@@ -1,9 +1,12 @@
-{#- 작업자 카드 기본 양식 (api-contract §9 「작업자 카드: US QR + 이름 + 역할」). S1-6 에서 실물 검증. -#}
+{#- 작업자 카드 기본 양식 (api-contract §9 「작업자 카드: US QR + 이름 + 역할」). 4×2 인치(812×406). -#}
 ^XA
 ^CI28
-^FO30,30^BQN,2,6,Q^FDQA,{{ qr_url }}^FS
-^FO260,50^A0N,40,40^FD{{ name }}^FS
-^FO260,110^A0N,30,30^FD{{ role }}^FS
-^FO260,160^A0N,30,30^FD{{ code }}^FS
-^FO260,210^A0N,22,22^FD발행 {{ issue_no }}차 {{ printed_at }}^FS
+^PW812
+^LL406
+^FO24,24^BQN,2,{{ qr_mag }},{{ qr_ecc }}^FD{{ qr_ecc }}A,{{ qr_url }}^FS
+^FO320,40^A0N,60,60^FB470,1,0,L^FD{{ name }}^FS
+^FO320,120^A0N,36,36^FD{{ role }}^FS
+^FO320,180^A0N,44,44^FD{{ code }}^FS
+^FO320,250^GB468,3,3^FS
+^FO320,270^A0N,26,26^FD발행 {{ issue_no }}차  {{ printed_at }}^FS
 ^XZ

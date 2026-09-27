@@ -1,0 +1,88 @@
+"""S1-5 작업지시서 PDF: `%PDF` 헤더 · 쪽 수(표지 + WO 수) · WO 없는 SO 는 표지만 · 권한 ·
+한글 폰트."""
+
+from __future__ import annotations
+
+import io
+
+import pypdfium2 as pdfium
+from httpx import AsyncClient
+
+from app.db.session import SessionLocal
+from app.domain.label import pdf as pdf_mod
+from app.domain.label import service as svc
+from tests.conftest import headers_for
+from tests.label_helpers import make_so
+
+API = "/api/v1"
+
+
+def _pages(pdf: bytes) -> int:
+    return len(pdfium.PdfDocument(io.BytesIO(pdf)))
+
+
+def _text(pdf: bytes) -> str:
+    doc = pdfium.PdfDocument(io.BytesIO(pdf))
+    return "\n".join(doc[i].get_textpage().get_text_range() for i in range(len(doc)))
+
+
+async def test_so_pdf_cover_plus_wo_pages(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    data = await make_so(with_wo=2)
+    async with SessionLocal() as s:
+        await svc.record_issue(s, "SO", data["so_code"], "WORK_ORDER_PDF")
+        await s.commit()
+    res = await client.get(f"{API}/labels/so/{data['so_code']}.pdf", headers=admin_headers)
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("application/pdf")
+    assert data["so_code"] in res.headers["content-disposition"]
+    pdf = res.content
+    assert pdf[:5] == b"%PDF-"
+    assert _pages(pdf) == 3  # 표지 + WO 2쪽
+    text = _text(pdf)
+    assert data["so_code"] in text and all(c in text for c in data["wo_codes"])
+    assert data["customer_name"] in text and "P30" in text and "24.0" in text
+    assert "발행 1차" in text  # 표지 차수 (record_issue)
+    # GET 은 차수를 올리지 않는다
+    async with SessionLocal() as s:
+        assert await svc.last_issue_no(s, "SO", data["so_code"], "WORK_ORDER_PDF") == 1
+
+
+async def test_so_pdf_without_wo_is_cover_only(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    data = await make_so(with_wo=0)
+    res = await client.get(f"{API}/labels/so/{data['so_code'].lower()}.pdf", headers=admin_headers)
+    assert res.status_code == 200 and _pages(res.content) == 1
+    assert "미발행" in _text(res.content)
+    # DRAFT WO 는 표지 요약에도 넣지 않는다
+    data = await make_so(with_wo=1, issued=False)
+    res = await client.get(f"{API}/labels/so/{data['so_code']}.pdf", headers=admin_headers)
+    assert res.status_code == 200 and _pages(res.content) == 1
+
+
+async def test_wo_pdf_and_errors(client: AsyncClient, admin_headers: dict[str, str]) -> None:
+    data = await make_so(with_wo=2)
+    res = await client.get(
+        f"{API}/labels/work-order/{data['wo_codes'][1]}.pdf", headers=admin_headers
+    )
+    assert res.status_code == 200 and _pages(res.content) == 2
+    assert data["wo_codes"][1] in _text(res.content)
+    res = await client.get(f"{API}/labels/so/SO-990101-9999.pdf", headers=admin_headers)
+    assert res.status_code == 404 and res.json()["code"] == "SO_NOT_FOUND"
+    res = await client.get(f"{API}/labels/work-order/WO-990101-9999.pdf", headers=admin_headers)
+    assert res.status_code == 404 and res.json()["code"] == "WO_NOT_FOUND"
+    assert (await client.get(f"{API}/labels/so/{data['so_code']}.pdf")).status_code == 401
+    viewer = await headers_for(client, "t_viewer", "VIEWER")
+    assert (
+        await client.get(f"{API}/labels/so/{data['so_code']}.pdf", headers=viewer)
+    ).status_code == 200  # 전 역할 R
+
+
+def test_korean_font_and_sample_document() -> None:
+    assert not pdf_mod.korean_font_status().startswith("NONE"), pdf_mod.korean_font_status()
+    ctx = pdf_mod.sample_document_context()
+    assert ctx["work_orders"] and ctx["qr_png_uri"].startswith("data:image/png")
+    pdf = pdf_mod.html_to_pdf("<html><body><p>한글</p></body></html>")
+    assert pdf[:5] == b"%PDF-" and _pages(pdf) == 1
