@@ -9,8 +9,7 @@
   · sales_order · sales_order_line · design (stock_txn[ADJUST] 는 재고 서비스가 명시적으로 쓴다).
 - 잡음 컬럼(last_seen_at · updated_at · pin_failed_count · pin_locked_until)만 바뀐 UPDATE 는
   기록하지 않는다. 비밀 해시 컬럼은 값 대신 ``"<set>"``/None 으로 남긴다.
-- ``row_id BIGINT`` 라 자연키(문자열 PK) 테이블은 row_id=0 + ``_pk`` 키로 남긴다 (보고: 계약 변경
-  필요).
+- 숫자 PK 는 ``row_id``, 자연키(문자열 PK) 테이블은 ``row_key=str(pk)`` (db-schema §15, 0006).
 """
 
 from __future__ import annotations
@@ -99,12 +98,13 @@ def snapshot(obj: Any) -> dict[str, Any]:
     return out
 
 
-def _row_id(obj: Any) -> tuple[int, str | None]:
+def _row_ref(obj: Any) -> tuple[int | None, str | None]:
+    """(row_id, row_key) — 숫자 PK 면 row_id, 자연키면 row_key."""
     pk_cols = inspect(type(obj)).primary_key
     val = getattr(obj, pk_cols[0].key)
     if isinstance(val, int):
         return val, None
-    return 0, str(val)
+    return None, str(val)
 
 
 def _before_flush(session: Session, flush_context: UOWTransaction, instances: Any) -> None:
@@ -140,18 +140,14 @@ def _after_flush_postexec(session: Session, flush_context: UOWTransaction) -> No
     user_id = current_user_id.get()
     request_id = current_request_id.get()
     for p in pending:
-        row_id, natural_key = _row_id(p.obj)
+        row_id, row_key = _row_ref(p.obj)
         after = snapshot(p.obj) if p.after_snapshot else None
         before = p.before
-        if natural_key is not None:
-            if after is not None:
-                after = {"_pk": natural_key, **after}
-            if before is not None:
-                before = {"_pk": natural_key, **before}
         session.add(
             AuditLog(
                 table_name=p.obj.__tablename__,
                 row_id=row_id,
+                row_key=row_key,
                 action=p.action,
                 before=before,
                 after=after,

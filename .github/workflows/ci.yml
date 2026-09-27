@@ -37,6 +37,9 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy app
+      # 모델 ↔ 마이그레이션 일치 (RISK-2). pytest 의 conftest 도 upgrade/downgrade 왕복을 돈다
+      - run: alembic upgrade head
+      - run: alembic check
       - run: pytest -q
 
   web:
@@ -54,4 +57,5 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
+      - run: npm test
       - run: npm run build

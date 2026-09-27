@@ -224,3 +224,149 @@ async def test_worker_login_pin_rules(client: AsyncClient, station_key: tuple[st
     # 카드만 → PIN 검증 없이 OK (카드 분실 시에만 PIN)
     res = await client.post(f"{API}/auth/worker", json={"card_code": w.card_code}, headers=h)
     assert res.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# S0 수정 웨이브 (QA 반영): D26 PIN_NOT_SET · 잠금 범위 · D27 LOGIN_LOCKED · D28 login_id 정규화
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_pin_not_set_409_without_counting(
+    client: AsyncClient, station_key: tuple[str, str]
+) -> None:
+    _, key = station_key
+    h = {"X-Station-Key": key}
+    w = await ensure_user(uniq("t_np_").lower(), "WORKER", pin=None, card=True)
+    for _ in range(6):  # 6번 보내도 카운트·잠금 없음
+        res = await client.post(
+            f"{API}/auth/worker", json={"card_code": w.card_code, "pin": "1234"}, headers=h
+        )
+        assert res.status_code == 409 and res.json()["code"] == "PIN_NOT_SET", res.text
+    from app.db.models.master import AppUser
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as s:
+        u = await s.get(AppUser, w.id)
+        assert u is not None and u.pin_failed_count == 0 and u.pin_locked_until is None
+    # 카드만 → 200
+    res = await client.post(f"{API}/auth/worker", json={"card_code": w.card_code}, headers=h)
+    assert res.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_pin_lock_scope_card_only_allowed_and_set_pin_resets(
+    client: AsyncClient, station_key: tuple[str, str], admin_headers: dict[str, str]
+) -> None:
+    _, key = station_key
+    h = {"X-Station-Key": key}
+    w = await ensure_user(uniq("t_lk_").lower(), "WORKER", pin="1111", card=True)
+    for _ in range(5):
+        await client.post(
+            f"{API}/auth/worker", json={"card_code": w.card_code, "pin": "0000"}, headers=h
+        )
+    res = await client.post(
+        f"{API}/auth/worker", json={"card_code": w.card_code, "pin": "1111"}, headers=h
+    )
+    assert res.status_code == 429 and res.json()["code"] == "PIN_LOCKED"
+    # 잠금 중 카드 단독 로그인은 허용 (D26, DEF-QA1-004 고정)
+    res = await client.post(f"{API}/auth/worker", json={"card_code": w.card_code}, headers=h)
+    assert res.status_code == 200 and res.json()["login_via"] == "CARD"
+    # 관리자 웹 로그인은 PIN 잠금과 무관 (분리 카운터)
+    await ensure_user(w.login_id, "WORKER", password=TEST_ADMIN_PASSWORD, pin="1111", card=True)
+    # ensure_user 가 pin 카운터를 리셋하므로 다시 잠근다
+    for _ in range(5):
+        await client.post(
+            f"{API}/auth/worker", json={"card_code": w.card_code, "pin": "0000"}, headers=h
+        )
+    res = await client.post(
+        f"{API}/auth/login", json={"login_id": w.login_id, "password": TEST_ADMIN_PASSWORD}
+    )
+    assert res.status_code == 200
+    # set-pin 성공 → 카운터·잠금 리셋 (§14.1)
+    res = await client.post(
+        f"{API}/users/{w.id}/set-pin", headers=admin_headers, json={"pin": "2222"}
+    )
+    assert res.status_code == 200
+    res = await client.post(
+        f"{API}/auth/worker", json={"card_code": w.card_code, "pin": "2222"}, headers=h
+    )
+    assert res.status_code == 200 and res.json()["login_via"] == "CARD"
+
+
+@pytest.mark.asyncio
+async def test_admin_login_lock_5_per_15min(client: AsyncClient) -> None:
+    login = uniq("t_ll_").lower()
+    await ensure_user(login, "MANAGER", password=TEST_ADMIN_PASSWORD)
+    for i in range(4):
+        res = await client.post(
+            f"{API}/auth/login", json={"login_id": login, "password": "Wrong1234"}
+        )
+        assert res.status_code == 401 and res.json()["code"] == "BAD_CREDENTIALS", i
+    res = await client.post(f"{API}/auth/login", json={"login_id": login, "password": "Wrong1234"})
+    assert res.status_code == 429 and res.json()["code"] == "LOGIN_LOCKED"
+    assert int(res.headers["Retry-After"]) > 0
+    # 잠금 중에는 올바른 비밀번호도 429
+    res = await client.post(
+        f"{API}/auth/login", json={"login_id": login, "password": TEST_ADMIN_PASSWORD}
+    )
+    assert res.status_code == 429
+    # 없는 ID 는 카운터 없이 401
+    res = await client.post(
+        f"{API}/auth/login", json={"login_id": "no_such_user_x", "password": "x1234567"}
+    )
+    assert res.status_code == 401
+    # login_id 정규화 (D28): 대문자·공백 → 소문자 trim 으로 같은 사용자
+    from app.db.models.master import AppUser
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as s:
+        from sqlalchemy import select
+
+        u = (await s.execute(select(AppUser).where(AppUser.login_id == login))).scalar_one()
+        u.login_locked_until = None
+        u.login_failed_count = 0
+        await s.commit()
+    res = await client.post(
+        f"{API}/auth/login",
+        json={"login_id": f"  {login.upper()} ", "password": TEST_ADMIN_PASSWORD},
+    )
+    assert res.status_code == 200 and res.json()["user"]["login_id"] == login
+
+
+@pytest.mark.asyncio
+async def test_openapi_declares_security_schemes(client: AsyncClient) -> None:
+    doc = (await client.get("/openapi.json")).json()
+    assert set(doc["components"]["securitySchemes"]) == {"BearerJWT", "StationKey"}
+    assert doc["paths"]["/api/v1/auth/me"]["get"]["security"] == [{"BearerJWT": []}]
+    worker = doc["paths"]["/api/v1/auth/worker"]["post"]
+    assert {"StationKey": []} in worker["security"]
+    assert "X-Station-Key" in [p["name"] for p in worker.get("parameters", [])]
+    customers = doc["paths"]["/api/v1/customers"]["get"]
+    assert {"BearerJWT": []} in customers["security"] and {"StationKey": []} in customers[
+        "security"
+    ]
+    # JWT 전용 경로에 X-Station-Key 일반 파라미터 노출 없음 (DEF-QA1-002)
+    assert "X-Station-Key" not in [
+        p["name"] for p in doc["paths"]["/api/v1/auth/me"]["get"].get("parameters", [])
+    ]
+
+
+@pytest.mark.asyncio
+async def test_health_time_is_kst_and_integrity_detail_masked(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    res = await client.get("/health")
+    assert res.json()["time"].endswith("+09:00")  # DEF-QA2-007
+    # 동시 같은 login_id 생성 → IntegrityError 핸들러 경로: detail 에 DB 원문 없음 (DEF-QA2-008)
+    import asyncio
+
+    login = uniq("t_race_").lower()
+    body = {"login_id": login, "name": "x", "role": "VIEWER"}
+    results = await asyncio.gather(
+        *(client.post(f"{API}/users", headers=admin_headers, json=body) for _ in range(4))
+    )
+    codes = sorted(r.status_code for r in results)
+    assert codes[0] == 201 and set(codes[1:]) == {409}
+    for r in results:
+        if r.status_code == 409:
+            assert r.json()["code"] == "DUPLICATE_CODE" and r.json()["detail"] == []
+            assert "constraint" not in r.text

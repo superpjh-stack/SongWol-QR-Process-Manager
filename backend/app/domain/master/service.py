@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.v1.schemas import master as S
+from app.api.v1.schemas.common import normalize_code
 from app.core.errors import ApiError, duplicate_code, not_found, validation
 from app.db.models.enums import EquipType
 from app.db.models.master import (
@@ -231,6 +232,7 @@ async def list_item_groups(session: AsyncSession, *, active: bool | None) -> lis
 
 
 async def get_item_group(session: AsyncSession, code: str) -> ItemGroup:
+    code = normalize_code(code)
     g = await session.get(ItemGroup, code)
     if g is None:
         raise not_found("ITEM_GROUP_NOT_FOUND", "품목군", code)
@@ -347,6 +349,7 @@ async def list_print_methods(session: AsyncSession, *, active: bool | None) -> l
 
 
 async def get_print_method(session: AsyncSession, code: str) -> PrintMethod:
+    code = normalize_code(code)
     pm = await session.get(PrintMethod, code)
     if pm is None:
         raise not_found("PRINT_METHOD_NOT_FOUND", "가공방식", code)
@@ -389,6 +392,7 @@ async def list_processes(session: AsyncSession, *, active: bool | None) -> list[
 
 
 async def get_process(session: AsyncSession, code: str) -> Process:
+    code = normalize_code(code)
     p = await session.get(Process, code)
     if p is None:
         raise not_found("PROCESS_NOT_FOUND", "공정", code)

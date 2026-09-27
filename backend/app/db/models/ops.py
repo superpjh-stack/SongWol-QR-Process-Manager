@@ -14,6 +14,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    SmallInteger,
     String,
     UniqueConstraint,
     func,
@@ -69,15 +70,21 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
     __table_args__ = (
         Index("ix_audit_log_table_name_row_id", "table_name", "row_id"),
+        Index("ix_audit_log_table_row_key", "table_name", "row_key"),
         CheckConstraint(sql_in("action", AuditAction), name="action"),
+        CheckConstraint("row_id IS NOT NULL OR row_key IS NOT NULL", name="row_ref"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     table_name: Mapped[str] = mapped_column(String(40), nullable=False)
-    row_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # 0006 (db-schema §15, F24): 숫자 PK 는 row_id, 자연키(station·process·…)는 row_key.
+    # 둘 중 하나는 필수
+    row_id: Mapped[int | None] = mapped_column(BigInteger)
+    row_key: Mapped[str | None] = mapped_column(String(64))
     action: Mapped[str] = mapped_column(String(10), nullable=False)
-    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # DEF-QA1-001/DEF-QA2-004: None 은 JSON 'null' 이 아니라 SQL NULL 로 (before IS NULL 조회 가능)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     user_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT")
     )
@@ -124,6 +131,16 @@ class MigrationBatch(Base):
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     merge_policy: Mapped[str | None] = mapped_column(String(10))
+    # 0006: 대사식 row_count_src = loaded + merged + skipped + failed + ignored (F30, ADM-31)
+    row_count_skipped: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0")
+    )
+    row_count_failed: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0")
+    )
+    row_count_ignored: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0")
+    )
 
 
 class MigrationMap(Base):

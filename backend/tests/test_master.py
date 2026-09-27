@@ -677,3 +677,135 @@ async def test_audit_log_records_master_changes(
     assert logs[0].before is None and logs[0].after["code"] == code
     assert logs[1].before == {"name": "감사"} and logs[1].after["name"] == "감사2"
     assert logs[1].request_id == "req-audit-1" and logs[1].user_id is not None
+
+
+# ---------------------------------------------------------------------------
+# S0 수정 웨이브 (QA 반영): D28 코드 정규화 · audit row_key/SQL NULL · seed after reorder (F28)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_code_normalization_trim_upper(
+    client: AsyncClient, admin_headers: dict[str, str], item_group: str
+) -> None:
+    base = uniq("nm")  # 소문자 포함
+    res = await client.post(
+        f"{API}/customers",
+        headers=admin_headers,
+        json={"code": f"  {base.lower()} ", "name": "정규화"},
+    )
+    assert res.status_code == 201 and res.json()["code"] == base.upper()
+    # 대소문자만 다른 코드는 중복 (DEF-QA2-010)
+    res = await client.post(
+        f"{API}/customers", headers=admin_headers, json={"code": base.upper(), "name": "x"}
+    )
+    assert res.status_code == 409 and res.json()["code"] == "DUPLICATE_CODE"
+    # item_group 도 정규화되어 활성 품목군과 매칭
+    res = await client.post(
+        f"{API}/items",
+        headers=admin_headers,
+        json={"code": uniq("it").lower(), "name": "x", "item_group": f" {item_group.lower()} "},
+    )
+    assert res.status_code == 201 and res.json()["item_group"] == item_group
+    # 조회 경로 {code} 도 정규화 (§14.4 D28)
+    res = await client.get(f"{API}/processes/p30", headers=admin_headers)
+    assert res.status_code == 200 and res.json()["code"] == "P30"
+    res = await client.get(f"{API}/print-methods/screen", headers=admin_headers)
+    assert res.status_code == 200
+    # vendor_barcode 는 원문 유지
+    res = await client.post(
+        f"{API}/items",
+        headers=admin_headers,
+        json={
+            "code": uniq("it"),
+            "name": "x",
+            "item_group": item_group,
+            "vendor_barcode": "abc-001",
+        },
+    )
+    assert res.json()["vendor_barcode"] == "abc-001"
+
+
+@pytest.mark.asyncio
+async def test_audit_row_key_and_sql_null(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    code = uniq("AK")
+    cid = (
+        await client.post(
+            f"{API}/customers", headers=admin_headers, json={"code": code, "name": "감사키"}
+        )
+    ).json()["id"]
+    # 자연키(process) PATCH → row_key, row_id NULL
+    await client.patch(f"{API}/processes/P30", headers=admin_headers, json={"name": "인쇄"})
+    from sqlalchemy import text
+
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT before IS NULL AS b_null, row_key FROM mes.audit_log "
+                    "WHERE table_name='customer' AND row_id=:i AND action='INSERT'"
+                ),
+                {"i": cid},
+            )
+        ).one()
+        assert row.b_null is True and row.row_key is None  # DEF-QA1-001: SQL NULL
+        pk = (
+            await s.execute(
+                text(
+                    "SELECT row_id, row_key, after ? '_pk' AS has_pk FROM mes.audit_log "
+                    "WHERE table_name='process' AND row_key='P30' ORDER BY id DESC LIMIT 1"
+                )
+            )
+        ).one()
+        assert pk.row_id is None and pk.row_key == "P30" and pk.has_pk is False
+        bad = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM mes.audit_log "
+                    "WHERE before = 'null'::jsonb OR after = 'null'::jsonb"
+                )
+            )
+        ).scalar_one()
+        assert bad == 0
+
+
+@pytest.mark.asyncio
+async def test_seed_after_reorder_is_idempotent(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """DEF-QA2-002/F28: reorder 로 seq 가 바뀐 뒤 seed 재실행이 실패하지 않고 순서를 유지한다."""
+    from app.db.seed import run_seed
+    from app.db.session import SessionLocal
+
+    all_codes = [
+        p["code"] for p in (await client.get(f"{API}/processes", headers=admin_headers)).json()
+    ]
+    swapped = ["P10", "P30", "P20"] + [c for c in all_codes if c not in {"P10", "P20", "P30"}]
+    res = await client.post(
+        f"{API}/processes/reorder", headers=admin_headers, json={"codes": swapped}
+    )
+    assert res.status_code == 200
+    try:
+        async with SessionLocal() as s:
+            result = await run_seed(s, dev_stations=False, dev_item_groups=True)
+            assert result.process == 5
+        after = [
+            p["code"] for p in (await client.get(f"{API}/processes", headers=admin_headers)).json()
+        ]
+        assert after[:3] == ["P10", "P30", "P20"]  # seed 가 seq 를 되돌리지 않는다
+    finally:
+        res = await client.post(
+            f"{API}/processes/reorder", headers=admin_headers, json={"codes": all_codes}
+        )
+        assert res.status_code == 200
+        from app.db.models.master import Process
+
+        async with SessionLocal() as s:
+            for code, seq in (("P60", 60), ("P50", 50)):
+                proc = await s.get(Process, code)
+                assert proc is not None
+                proc.seq = seq
+                await s.flush()
+            await s.commit()

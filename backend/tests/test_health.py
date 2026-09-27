@@ -14,7 +14,8 @@ async def test_health_returns_200_with_db_status() -> None:
     body = res.json()
     assert body["status"] == "ok"
     assert body["db"] in ("ok", "error")
-    # ISO8601 UTC
+    # ISO8601, 응답 시각은 +09:00 (api-contract §1, DEF-QA2-007)
     parsed = datetime.fromisoformat(body["time"])
     assert parsed.tzinfo is not None
-    assert parsed.utcoffset() is not None and parsed.utcoffset().total_seconds() == 0
+    assert parsed.utcoffset() is not None and parsed.utcoffset().total_seconds() == 9 * 3600
+    assert body["version"]

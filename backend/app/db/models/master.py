@@ -275,6 +275,11 @@ class AppUser(TimestampMixin, Base):
     )
     pin_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 0006 (D27, DEF-QA2-009): 관리자 웹 로그인 5회 실패 → 15분 잠금. PIN 카운터와 분리
+    login_failed_count: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0")
+    )
+    login_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Printer(Base):

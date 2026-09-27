@@ -19,19 +19,37 @@ from sqlalchemy.exc import IntegrityError, InterfaceError, OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_v1
+from app.api.v1.schemas.common import to_kst_iso
 from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.core.request_context import current_request_id, current_user_id, new_request_id
-from app.db.audit import install_audit_hooks
+from app.db.bootstrap import bootstrap
 from app.db.session import engine
 
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
-install_audit_hooks()
+bootstrap()
 
 app = FastAPI(title=settings.app_name, version="0.0.1")
 app.include_router(api_v1)
+
+
+IMPORT_PREVIEW_PATH = "/api/v1/master/import/preview"
+
+
+@app.middleware("http")
+async def upload_size_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """§14.5: 업로드 크기 Content-Length 선검사 — 본문을 파싱하기 전에 413 (DEF: QA① 제안 5)."""
+    if request.method == "POST" and request.url.path == IMPORT_PREVIEW_PATH:
+        length = request.headers.get("content-length")
+        limit = settings.import_max_bytes + 64 * 1024  # multipart 경계 여유
+        if length and length.isdigit() and int(length) > limit:
+            mb = settings.import_max_bytes // (1024 * 1024)
+            return _error_response(413, "FILE_TOO_LARGE", f"파일이 {mb}MB 를 넘습니다")
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -99,13 +117,10 @@ async def integrity_handler(request: Request, exc: IntegrityError) -> JSONRespon
     """서비스가 미리 잡지 못한 제약 위반. 유니크 → 409 DUPLICATE_CODE, 그 외 409 STATE_CONFLICT."""
     text_ = str(exc.orig)
     logger.warning("integrity error: %s", text_)
+    # DEF-QA2-008: 제약명·테이블명 원문은 로그에만. 응답은 코드만.
     if "unique" in text_.lower() or "duplicate key" in text_.lower():
-        return _error_response(
-            409, "DUPLICATE_CODE", "이미 있는 코드입니다", [{"db": text_.splitlines()[0]}]
-        )
-    return _error_response(
-        409, "STATE_CONFLICT", "데이터 제약에 걸렸습니다", [{"db": text_.splitlines()[0]}]
-    )
+        return _error_response(409, "DUPLICATE_CODE", "이미 있는 코드입니다")
+    return _error_response(409, "STATE_CONFLICT", "데이터 제약에 걸렸습니다")
 
 
 @app.exception_handler(OperationalError)
@@ -141,5 +156,5 @@ async def health() -> HealthResponse:
         status="ok" if db == "ok" else "degraded",
         db=db,
         version=app.version,
-        time=datetime.now(UTC).isoformat(),
+        time=to_kst_iso(datetime.now(UTC)),  # api-contract §1: 응답 시각은 +09:00 (DEF-QA2-007)
     )

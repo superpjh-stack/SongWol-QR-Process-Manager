@@ -7,6 +7,10 @@
   404 USER_CARD_NOT_FOUND · 401 BAD_PIN · 403 USER_INACTIVE · 403 ROLE_NOT_ALLOWED · 409
   CARD_REQUIRED
   · 429 PIN_LOCKED (5회 실패, 15분, Retry-After). PIN 실패 카운트는 승인 경로와 공유(app_user 컬럼).
+- 관리자 웹 로그인도 5회 실패 → 15분 잠금 429 ``LOGIN_LOCKED`` + Retry-After (D27). 카운터는 PIN 과
+  분리(login_failed_count/login_locked_until).
+- PIN 미설정 사용자에 PIN 이 오면 409 ``PIN_NOT_SET`` (카운트 없음). 잠금은 PIN 경로만 — 카드 단독
+  로그인은 잠금 중에도 허용(카드 = 물리 소지 요소, D26).
 """
 
 from __future__ import annotations
@@ -27,34 +31,62 @@ from app.db.models.scan import ScanEvent, ScanEventKey
 STATION_LOGIN_ROLES = frozenset({"WORKER", "MANAGER", "ADMIN"})
 
 
+def _locked_error(code: str, locked_until: datetime, now: datetime, what: str) -> ApiError:
+    retry = int((locked_until - now).total_seconds()) + 1
+    return ApiError(
+        429,
+        code,
+        f"{what} {PIN_MAX_FAILURES}회 틀려 잠겼습니다. {retry // 60 + 1}분 후 다시 시도하세요",
+        headers={"Retry-After": str(retry)},
+    )
+
+
+BAD_CREDENTIALS_MSG = "아이디 또는 비밀번호가 올바르지 않습니다"
+
+
 async def login(session: AsyncSession, login_id: str, password: str) -> tuple[str, int, AppUser]:
     user = (
         await session.execute(select(AppUser).where(AppUser.login_id == login_id))
     ).scalar_one_or_none()
-    if user is None or not user.password_hash or not verify_secret(password, user.password_hash):
-        raise ApiError(401, "BAD_CREDENTIALS", "아이디 또는 비밀번호가 올바르지 않습니다")
+    if user is None:
+        raise ApiError(401, "BAD_CREDENTIALS", BAD_CREDENTIALS_MSG)
+    now = datetime.now(UTC)
+    if user.login_locked_until is not None and user.login_locked_until > now:
+        raise _locked_error("LOGIN_LOCKED", user.login_locked_until, now, "비밀번호가")
+    if not user.password_hash or not verify_secret(password, user.password_hash):
+        user.login_failed_count = (user.login_failed_count or 0) + 1
+        if user.login_failed_count >= PIN_MAX_FAILURES:
+            user.login_locked_until = now + timedelta(minutes=PIN_LOCK_MINUTES)
+            user.login_failed_count = 0
+            await session.commit()
+            raise _locked_error("LOGIN_LOCKED", user.login_locked_until, now, "비밀번호가")
+        await session.commit()
+        raise ApiError(401, "BAD_CREDENTIALS", BAD_CREDENTIALS_MSG)
     if not user.active:
         raise ApiError(403, "USER_INACTIVE", "비활성 사용자입니다")
+    if user.login_failed_count or user.login_locked_until:
+        user.login_failed_count = 0
+        user.login_locked_until = None
+        await session.commit()
     token, expires_in = create_access_token(user_id=user.id, login_id=user.login_id, role=user.role)
     return token, expires_in, user
 
 
 def _check_lock(user: AppUser, now: datetime) -> None:
     if user.pin_locked_until is not None and user.pin_locked_until > now:
-        retry = int((user.pin_locked_until - now).total_seconds()) + 1
-        raise ApiError(
-            429,
-            "PIN_LOCKED",
-            f"PIN 이 {PIN_MAX_FAILURES}회 틀려 잠겼습니다. {retry // 60 + 1}분 후 다시 시도하세요",
-            headers={"Retry-After": str(retry)},
-        )
+        raise _locked_error("PIN_LOCKED", user.pin_locked_until, now, "PIN 이")
 
 
 async def verify_pin(session: AsyncSession, user: AppUser, pin: str) -> None:
-    """PIN 대조 + 잠금 카운트. 실패는 commit 후 401 BAD_PIN (카운트가 남아야 한다)."""
+    """PIN 대조 + 잠금 카운트. 실패는 commit 후 401 BAD_PIN (카운트가 남아야 한다).
+
+    PIN 미설정 → 409 PIN_NOT_SET, 카운트 없음 (D26). 승인 PIN(S2) 도 이 함수를 쓴다.
+    """
+    if user.pin_hash is None:
+        raise ApiError(409, "PIN_NOT_SET", "PIN 이 설정되지 않았습니다 — 관리자에게 요청하세요")
     now = datetime.now(UTC)
     _check_lock(user, now)
-    if user.pin_hash and verify_secret(pin, user.pin_hash):
+    if verify_secret(pin, user.pin_hash):
         if user.pin_failed_count or user.pin_locked_until:
             user.pin_failed_count = 0
             user.pin_locked_until = None

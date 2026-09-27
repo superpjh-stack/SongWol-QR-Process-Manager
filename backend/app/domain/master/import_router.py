@@ -13,10 +13,11 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import permissions as P
-from app.api.deps import CurrentUser, Principal, Session, require_roles
+from app.api.deps import CurrentUser, Session, require_roles
 from app.api.v1.schemas import master as S
 from app.api.v1.schemas.common import Page
-from app.core.errors import forbidden
+from app.core.config import get_settings
+from app.core.errors import ApiError, forbidden
 from app.db.models.master import AppUser
 from app.domain.common.listing import PageDep, PageParams
 from app.domain.master import import_service as svc
@@ -29,7 +30,6 @@ _file_field = File()
 _entity_form = Form()
 _source_form = Form(default=None)
 _migration_read = Depends(require_roles(*P.MIGRATION_READ))
-_migration_write = Depends(require_roles(*P.MIGRATION_WRITE))
 
 
 def _check_import_role(user: AppUser, entity: str) -> None:
@@ -50,6 +50,23 @@ async def import_template(
     )
 
 
+async def _read_upload(file: UploadFile) -> bytes:
+    """§14.5: Content-Length 선검사는 ``app.main`` 미들웨어(본문 파싱 전 413), 여기서는 스트림 상한.
+
+    상한을 넘으면 다 읽기 전에 끊는다.
+    """
+    limit = get_settings().import_max_bytes
+    too_large = ApiError(413, "FILE_TOO_LARGE", f"파일이 {limit // (1024 * 1024)}MB 를 넘습니다")
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(256 * 1024):
+        total += len(chunk)
+        if total > limit:
+            raise too_large
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.post("/master/import/preview", response_model=S.ImportPreview, status_code=201)
 async def import_preview(
     file: UploadFile = _file_field,
@@ -59,7 +76,7 @@ async def import_preview(
     session: AsyncSession = Session,
 ) -> S.ImportPreview:
     _check_import_role(user, entity)
-    data = await file.read()
+    data = await _read_upload(file)
     return await svc.preview(
         session,
         entity=entity,
@@ -101,21 +118,26 @@ async def list_batches(
     return {"items": items, "page": params.page, "size": params.size, "total": total}
 
 
-@router.get(
-    "/migration/batches/{batch_id}",
-    response_model=S.MigrationBatchDetail,
-    dependencies=[_migration_read],
-)
+@router.get("/migration/batches/{batch_id}", response_model=S.MigrationBatchDetail)
 async def batch_detail(
-    batch_id: int, maps_params: PageParams = PageDep, session: AsyncSession = Session
+    batch_id: int,
+    maps_params: PageParams = PageDep,
+    user: AppUser = CurrentUser,
+    session: AsyncSession = Session,
 ) -> S.MigrationBatchDetail:
+    """§14.3: ADMIN/MANAGER R + 본인 배치는 작성자(SALES 등)도 R."""
+    batch = await svc.get_batch(session, batch_id)
+    if user.role not in P.MIGRATION_READ and batch.created_by != user.id:
+        raise forbidden()
     return await svc.batch_detail(session, batch_id, maps_params)
 
 
 @router.post("/migration/batches/{batch_id}/discard", response_model=S.MigrationBatch)
 async def discard_batch(
-    batch_id: int,
-    principal: Principal = _migration_write,
-    session: AsyncSession = Session,
+    batch_id: int, user: AppUser = CurrentUser, session: AsyncSession = Session
 ) -> S.MigrationBatch:
+    """§14.3: ADMIN 또는 그 배치의 created_by 본인(role 무관). 남의 배치는 403."""
+    batch = await svc.get_batch(session, batch_id)
+    if user.role not in P.MIGRATION_WRITE and batch.created_by != user.id:
+        raise forbidden()
     return await svc.discard(session, batch_id)

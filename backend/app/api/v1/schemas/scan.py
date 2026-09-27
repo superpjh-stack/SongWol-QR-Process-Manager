@@ -4,14 +4,14 @@ from typing import Literal
 
 from pydantic import Field
 
-from app.api.v1.schemas.common import ApiModel
+from app.api.v1.schemas.common import ApiModel, CodeStr, LoginIdStr
 from app.api.v1.schemas.master import UserSummary
 
 LoginVia = Literal["CARD", "PIN", "OFFLINE_CACHE"]
 
 
 class LoginRequest(ApiModel):
-    login_id: str = Field(min_length=1, max_length=30)
+    login_id: LoginIdStr = Field(min_length=1, max_length=30)
     password: str = Field(min_length=1)
 
 
@@ -23,8 +23,8 @@ class LoginResponse(ApiModel):
 
 
 class WorkerLoginRequest(ApiModel):
-    card_code: str | None = None
-    login_id: str | None = None
+    card_code: CodeStr | None = None
+    login_id: LoginIdStr | None = None
     pin: str | None = None
 
 

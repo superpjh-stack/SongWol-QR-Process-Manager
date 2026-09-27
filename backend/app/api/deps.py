@@ -8,6 +8,9 @@
   없음.
 - ``require_roles(*roles, station=…)`` → ``Principal`` (사용자 또는 단말). 둘 다 없으면 401, 권한
   밖이면 403.
+- 두 자격은 FastAPI ``HTTPBearer``·``APIKeyHeader`` 로 선언한다 → OpenAPI
+  ``securitySchemes``/``security`` (DEF-QA1-002). 단말 전용 경로는 ``X-Station-Key`` 를 헤더
+  파라미터로도 노출한다(계약 대조 도구 1-D).
 """
 
 from __future__ import annotations
@@ -16,7 +19,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from fastapi import Depends, Header, Request
+from fastapi import Depends, Header, Security
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +35,19 @@ STATION_KEY_HEADER = "X-Station-Key"
 INTEGRATION_KEY_HEADER = "X-Integration-Key"
 
 Session = Depends(get_session)
+
+bearer_scheme = HTTPBearer(
+    auto_error=False, scheme_name="BearerJWT", description="POST /auth/login 이 발급한 JWT (12h)"
+)
+station_key_scheme = APIKeyHeader(
+    name=STATION_KEY_HEADER,
+    auto_error=False,
+    scheme_name="StationKey",
+    description="단말 API key (POST /stations · rotate-key 응답에 1회 포함)",
+)
+BearerCreds = Security(bearer_scheme)
+StationKeySec = Security(station_key_scheme)
+StationKeyParam = Header(default=None, alias=STATION_KEY_HEADER)
 
 
 @dataclass(slots=True)
@@ -51,14 +68,10 @@ class Principal:
         return self.station is not None
 
 
-def _bearer(request: Request) -> str | None:
-    auth = request.headers.get("authorization")
-    if not auth:
+def _bearer(creds: HTTPAuthorizationCredentials | None) -> str | None:
+    if creds is None or not creds.credentials.strip():
         return None
-    scheme, _, token = auth.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        return None
-    return token.strip()
+    return creds.credentials.strip()
 
 
 async def _load_user_from_token(session: AsyncSession, token: str) -> AppUser:
@@ -95,9 +108,11 @@ async def _load_station_from_key(session: AsyncSession, key: str) -> Station:
     return station
 
 
-async def get_current_user(request: Request, session: AsyncSession = Session) -> AppUser:
+async def get_current_user(
+    creds: HTTPAuthorizationCredentials | None = BearerCreds, session: AsyncSession = Session
+) -> AppUser:
     """JWT 필수."""
-    token = _bearer(request)
+    token = _bearer(creds)
     if token is None:
         raise unauthenticated()
     return await _load_user_from_token(session, token)
@@ -105,21 +120,22 @@ async def get_current_user(request: Request, session: AsyncSession = Session) ->
 
 async def get_current_station(
     session: AsyncSession = Session,
-    x_station_key: str | None = Header(default=None, alias=STATION_KEY_HEADER),
+    x_station_key: str | None = StationKeyParam,
+    _declared: str | None = StationKeySec,
 ) -> Station:
-    """단말 키 필수."""
+    """단말 키 필수. 헤더 파라미터(문서 노출) + security 선언을 같이 둔다."""
     if not x_station_key:
         raise ApiError(401, "BAD_STATION_KEY", "X-Station-Key 헤더가 없습니다")
     return await _load_station_from_key(session, x_station_key)
 
 
 async def get_principal(
-    request: Request,
+    creds: HTTPAuthorizationCredentials | None = BearerCreds,
     session: AsyncSession = Session,
-    x_station_key: str | None = Header(default=None, alias=STATION_KEY_HEADER),
+    x_station_key: str | None = StationKeySec,
 ) -> Principal:
     """JWT 우선, 없으면 단말 키. 둘 다 없으면 401."""
-    token = _bearer(request)
+    token = _bearer(creds)
     if token is not None:
         return Principal(user=await _load_user_from_token(session, token))
     if x_station_key:

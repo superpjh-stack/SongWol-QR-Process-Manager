@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from app.api.v1.schemas.common import ApiModel, KstDateTime, Page
+from app.api.v1.schemas.common import ApiModel, CodeStr, KstDateTime, LoginIdStr, Page
 from app.api.v1.schemas.order import LabelJob
 
 PrintMethodCode = (
@@ -74,7 +74,7 @@ class Customer(ApiModel):
 
 
 class CustomerCreate(ApiModel):
-    code: str = Field(min_length=1, max_length=20)
+    code: CodeStr = Field(min_length=1, max_length=20)
     name: str = Field(min_length=1, max_length=100)
     contact_name: str | None = Field(default=None, max_length=50)
     phone: str | None = Field(default=None, max_length=30)
@@ -111,9 +111,9 @@ class Item(ApiModel):
 
 
 class ItemCreate(ApiModel):
-    code: str = Field(min_length=1, max_length=30)
+    code: CodeStr = Field(min_length=1, max_length=30)
     name: str = Field(min_length=1, max_length=100)
-    item_group: str = Field(min_length=1, max_length=30)
+    item_group: CodeStr = Field(min_length=1, max_length=30)
     spec: str | None = Field(default=None, max_length=50)
     color: str | None = Field(default=None, max_length=30)
     weight_g: int | None = Field(default=None, ge=0)
@@ -125,7 +125,7 @@ class ItemCreate(ApiModel):
 
 class ItemUpdate(ApiModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
-    item_group: str | None = Field(default=None, min_length=1, max_length=30)
+    item_group: CodeStr | None = Field(default=None, min_length=1, max_length=30)
     spec: str | None = Field(default=None, max_length=50)
     color: str | None = Field(default=None, max_length=30)
     weight_g: int | None = Field(default=None, ge=0)
@@ -142,7 +142,7 @@ class ItemGroup(ApiModel):
 
 
 class ItemGroupCreate(ApiModel):
-    code: str = Field(min_length=1, max_length=30)
+    code: CodeStr = Field(min_length=1, max_length=30)
     name: str = Field(min_length=1, max_length=50)
 
 
@@ -163,7 +163,7 @@ class Process(ApiModel):
 
 
 class ProcessCreate(ApiModel):
-    code: str = Field(min_length=1, max_length=3)
+    code: CodeStr = Field(min_length=1, max_length=3)
     name: str = Field(min_length=1, max_length=30)
     seq: int = Field(ge=0, le=32767)
     requires_equipment: bool = False
@@ -180,7 +180,7 @@ class ProcessUpdate(ApiModel):
 
 
 class ProcessReorderRequest(ApiModel):
-    codes: list[str] = Field(min_length=1)
+    codes: list[CodeStr] = Field(min_length=1)
 
 
 class PrintMethod(ApiModel):
@@ -194,7 +194,7 @@ class PrintMethod(ApiModel):
 class PrintMethodCreate(ApiModel):
     """POST /print-methods (CRUD 공통형). ts-types 에 이름 없음 → 보고."""
 
-    code: str = Field(min_length=1, max_length=20, pattern=r"^[A-Z][A-Z0-9_]*$")
+    code: CodeStr = Field(min_length=1, max_length=20, pattern=r"^[A-Z][A-Z0-9_]*$")
     name: str = Field(min_length=1, max_length=30)
     equip_types: list[EquipType] = Field(default_factory=list)
     skips_p30: bool = False
@@ -215,15 +215,15 @@ class Equipment(ApiModel):
 
 
 class EquipmentCreate(ApiModel):
-    code: str = Field(min_length=1, max_length=20)
+    code: CodeStr = Field(min_length=1, max_length=20)
     name: str = Field(min_length=1, max_length=50)
-    process_code: str = Field(default="P30", min_length=1, max_length=3)
+    process_code: CodeStr = Field(default="P30", min_length=1, max_length=3)
     equip_type: EquipType
 
 
 class EquipmentUpdate(ApiModel):
     name: str | None = Field(default=None, min_length=1, max_length=50)
-    process_code: str | None = Field(default=None, min_length=1, max_length=3)
+    process_code: CodeStr | None = Field(default=None, min_length=1, max_length=3)
     equip_type: EquipType | None = None
 
 
@@ -238,7 +238,7 @@ class RoutingStep(ApiModel):
 
 class RoutingStepInput(ApiModel):
     seq: int = Field(ge=0, le=32767)
-    process_code: str = Field(min_length=1, max_length=3)
+    process_code: CodeStr = Field(min_length=1, max_length=3)
     std_lead_hours: float = Field(ge=0)
     tolerance_pct: float | None = Field(default=None, ge=0, le=50)
 
@@ -252,8 +252,8 @@ class Routing(ApiModel):
 
 
 class RoutingCreate(ApiModel):
-    item_group: str = Field(min_length=1, max_length=30)
-    print_method: str = Field(min_length=1, max_length=20)
+    item_group: CodeStr = Field(min_length=1, max_length=30)
+    print_method: CodeStr = Field(min_length=1, max_length=20)
     steps: list[RoutingStepInput] = Field(min_length=1)
 
 
@@ -281,18 +281,18 @@ class Station(ApiModel):
 
 
 class StationCreate(ApiModel):
-    id: str = Field(min_length=1, max_length=20)
+    id: CodeStr = Field(min_length=1, max_length=20)
     type: StationType
-    process_code: str | None = Field(default=None, max_length=3)
+    process_code: CodeStr | None = Field(default=None, max_length=3)
     location: str | None = Field(default=None, max_length=100)
-    printer_id: str | None = Field(default=None, max_length=20)
+    printer_id: CodeStr | None = Field(default=None, max_length=20)
 
 
 class StationUpdate(ApiModel):
     type: StationType | None = None
-    process_code: str | None = Field(default=None, max_length=3)
+    process_code: CodeStr | None = Field(default=None, max_length=3)
     location: str | None = Field(default=None, max_length=100)
-    printer_id: str | None = Field(default=None, max_length=20)
+    printer_id: CodeStr | None = Field(default=None, max_length=20)
 
 
 class StationCreated(Station):
@@ -324,7 +324,7 @@ class User(UserSummary):
 
 
 class UserCreate(ApiModel):
-    login_id: str = Field(min_length=1, max_length=30)
+    login_id: LoginIdStr = Field(min_length=1, max_length=30)
     name: str = Field(min_length=1, max_length=50)
     role: Role
     password: str | None = None
@@ -347,7 +347,7 @@ class SetPasswordRequest(ApiModel):
 
 class IssueCardRequest(ApiModel):
     reissue: bool | None = None
-    printer_id: str | None = None
+    printer_id: CodeStr | None = None
 
 
 class IssueCardResponse(ApiModel):
@@ -388,12 +388,14 @@ class ImportPreview(ApiModel):
     source: MigrationSource
     row_count: int
     valid: int
+    ignored: int  # 첫 열이 '#' 로 시작하는 행(템플릿 예시 등) — 데이터로 세지 않음 (D29)
     errors: list[ImportError]
     duplicates: list[ImportDuplicate]
     rows_sample: list[dict[str, Any]]
 
 
 class ImportCommitRequest(ApiModel):
+    # CODE·NAME_PHONE 공통. NAME_PHONE 은 SKIP 이 기본 처리, UPDATE 는 명시 선택 시에만 (D31)
     merge_policy: MergePolicy
     skip_invalid: bool | None = None
 
@@ -417,6 +419,9 @@ class MigrationBatch(ApiModel):
     row_count_src: int
     row_count_loaded: int
     row_count_merged: int
+    row_count_skipped: int
+    row_count_failed: int
+    row_count_ignored: int
     status: Literal["PREVIEW", "LOADED", "FAILED", "ROLLED_BACK"]
     merge_policy: MergePolicy | None
     created_by: UserSummary

@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.schemas import master as S
+from app.api.v1.schemas.common import normalize_code
 from app.api.v1.schemas.order import LabelJob
 from app.core.apikey import api_key_prefix, generate_api_key, hash_api_key
 from app.core.config import get_settings
@@ -166,6 +167,7 @@ async def list_stations(
 
 
 async def get_station(session: AsyncSession, station_id: str) -> Station:
+    station_id = normalize_code(station_id)
     st = await session.get(Station, station_id)
     if st is None:
         raise not_found("STATION_NOT_FOUND", "단말", station_id)

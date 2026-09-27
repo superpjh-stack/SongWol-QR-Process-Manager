@@ -90,6 +90,17 @@ cd backend && .venv/bin/pytest -q
 - 문서 폴더 `tools/seed_check.py` 가 테이블·제약·시드·파티션·뷰·캐시 대사를 요약한다:
   `backend/.venv/bin/python "<docs>/tools/seed_check.py"`.
 
+## QA 도구 (문서 폴더 `tools/`, 코드 리포 밖)
+```bash
+# 실서버를 띄운 뒤 (예: --port 8011, 같은 DB 에 alembic upgrade head + seed 선행)
+backend/.venv/bin/python "<docs>/tools/check_contract.py" --openapi http://127.0.0.1:8011/openapi.json   # OpenAPI ↔ api-contract ↔ ts-types
+backend/.venv/bin/python "<docs>/tools/qa_s0_api.py" --base http://127.0.0.1:8011                          # 기능·계약 실호출 (QA①)
+backend/.venv/bin/python "<docs>/tools/qa_s0_data.py" --base http://localhost:8012 \
+    --dsn postgresql://localhost:5432/songwol_qr_qa2 --admin-password '<seed admin 비밀번호>'              # 데이터 정합·비기능 (QA②, 전용 DB)
+```
+- 두 QA 스크립트는 실행마다 `QA1-`/`qa2` 접두사 데이터를 만든다 — 개발 DB 가 아니라 전용 DB 에 돌린다.
+- qa_s0_data 의 B2-15 는 admin 비밀번호를 20회 틀린다 → D27 이후 admin 이 15분 잠긴다(429 LOGIN_LOCKED). 이어지는 admin 로그인은 잠금 해제 후.
+
 ## 주의
 - `.env` 와 `migration/samples/` 는 git 에 올리지 않는다.
 - 시간대: 표시 `Asia/Seoul`, 저장 UTC.

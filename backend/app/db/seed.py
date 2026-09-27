@@ -49,11 +49,12 @@ class SeedResult:
 
 async def seed_process(session: AsyncSession) -> int:
     stmt = pg_insert(Process).values(as_dicts(PROCESS_ROWS))
+    # seq 는 갱신하지 않는다 — 운영에서 reorder 로 바뀐 순서를 시드가 되돌리거나
+    # uq_process_seq 와 충돌해 시드 전체가 실패하는 것을 막는다 (DEF-QA2-002/F28).
     stmt = stmt.on_conflict_do_update(
         index_elements=["code"],
         set_={
             "name": stmt.excluded.name,
-            "seq": stmt.excluded.seq,
             "requires_equipment": stmt.excluded.requires_equipment,
             "required_inputs": stmt.excluded.required_inputs,
         },
@@ -143,8 +144,11 @@ async def run_seed(
 
 
 async def _main(dev_stations: bool, dev_item_groups: bool) -> int:
+    from app.db.bootstrap import bootstrap
     from app.db.session import SessionLocal, engine
 
+    # 감사 로그 훅 — 시드 경로의 admin 갱신·단말 생성도 audit_log 에 남긴다 (DEF-QA2-005)
+    bootstrap()
     try:
         async with SessionLocal() as session:
             result = await run_seed(

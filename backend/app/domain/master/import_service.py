@@ -8,7 +8,12 @@
   다시 읽어 재검증한다
   (미리보기 뒤 DB 가 바뀌었을 수 있다).
 - 중복 후보: code 일치 = CODE, 거래처 상호+전화 일치 = NAME_PHONE. commit ``merge_policy``
-  SKIP/UPDATE.
+  SKIP/UPDATE. NAME_PHONE 은 SKIP 이 기본 처리, UPDATE 는 명시 선택 시 기존 코드 행 갱신
+  (``migration_map.note='MERGED_INTO:{existing_code}'``, D31).
+- 첫 열이 ``#`` 로 시작하는 행(템플릿 예시 ``#예시``)은 무시하고 ``ignored`` 로 센다 (D29).
+- preview 와 commit 은 같은 ``validate_rows`` 를 쓴다(활성 택배사·품목군 포함, D30). commit
+  재검증에서 오류가 나면 배치는 PREVIEW 유지 + errors 갱신 → 재commit 가능. 적재 중 업무 오류는 422
+  VALIDATION_ERROR(PREVIEW 유지), FAILED 는 적재 중 예외(DB 오류 등)에만.
 - ``errors>0`` 이고 ``skip_invalid`` 없으면 409 IMPORT_HAS_ERRORS. 같은 entity 의 동시 commit 은
   advisory lock → 423 LOCKED.
 - entity=stock 은 S5(마이그레이션 실사 반영) — 템플릿만 제공, preview 는 422 ENTITY_NOT_SUPPORTED.
@@ -33,11 +38,10 @@ from app.api.v1.schemas import master as S
 from app.api.v1.schemas.common import Page
 from app.core.config import get_settings
 from app.core.errors import ApiError, not_found, state_conflict, validation
-from app.db.models.master import AppUser, Customer, CustomerAddress, Item, ItemGroup
+from app.db.models.master import AppUser, Carrier, Customer, CustomerAddress, Item, ItemGroup
 from app.db.models.ops import MigrationBatch, MigrationMap
 from app.domain.common.listing import PageParams, paginate, parse_sort
 from app.domain.master.admin_service import user_summary
-from app.domain.master.service import check_carrier
 
 DATA_SHEET = "data"
 DOC_SHEET = "설명"
@@ -151,7 +155,9 @@ def build_template(entity: str) -> bytes:
     ws = wb.active
     ws.title = DATA_SHEET
     ws.append([c.name for c in cols])
-    ws.append([c.example for c in cols])
+    example = [c.example for c in cols]
+    example[0] = f"#예시 {example[0]}"  # D29: '#' 시작 행은 preview 가 무시한다
+    ws.append(example)
     doc = wb.create_sheet(DOC_SHEET)
     doc.append(["컬럼", "필수", "형식", "최대 길이", "설명"])
     for c in cols:
@@ -165,7 +171,8 @@ def build_template(entity: str) -> bytes:
     doc.append(
         [
             "규칙",
-            "첫 행 헤더 · 시트 1개(data) · .xlsx · 최대 5MB · 5,000행 · 2행(예시)은 지우고 쓴다",
+            "첫 행 헤더 · 시트 1개(data) · .xlsx · 최대 5MB · 5,000행 · "
+            "첫 열이 '#' 로 시작하는 행(2행 예시)은 무시된다",
         ]
     )
     buf = io.BytesIO()
@@ -185,8 +192,10 @@ def _cell_text(v: Any) -> str | None:
     return s or None
 
 
-def parse_workbook(data: bytes, entity: str) -> list[ParsedRow]:
+def parse_workbook(data: bytes, entity: str) -> tuple[list[ParsedRow], int]:
+    """→ (rows, ignored). 첫 열이 '#' 로 시작하는 행은 ignored 로 센다 (D29)."""
     cols = COLUMNS[entity]
+    ignored = 0
     try:
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     except Exception as e:  # openpyxl 은 zip/xml 오류를 여러 예외로 낸다
@@ -200,11 +209,13 @@ def parse_workbook(data: bytes, entity: str) -> list[ParsedRow]:
     idx = {name: i for i, name in enumerate(header) if name}
     missing = [c.name for c in cols if c.required and c.name not in idx]
     if missing:
-        raise validation(
+        err = validation(
             ["body", "file"],
             f"필수 컬럼이 없습니다: {', '.join(missing)} (템플릿을 다시 받으세요)",
             "BAD_TEMPLATE",
         )
+        err.detail.append({"missing_columns": missing})
+        raise err
     rows: list[ParsedRow] = []
     max_rows = get_settings().import_max_rows
     for excel_row, raw in enumerate(it, start=2):
@@ -218,10 +229,14 @@ def parse_workbook(data: bytes, entity: str) -> list[ParsedRow]:
         }
         if all(v is None for v in values.values()):
             continue
+        first = values.get(cols[0].name)
+        if isinstance(first, str) and first.startswith("#"):
+            ignored += 1
+            continue
         rows.append(ParsedRow(row=excel_row, values=values))
         if len(rows) > max_rows:
             raise validation(["body", "file"], f"행이 {max_rows}개를 넘습니다", "TOO_MANY_ROWS")
-    return rows
+    return rows, ignored
 
 
 def _validate_cell(r: ParsedRow, c: Col) -> None:
@@ -252,6 +267,10 @@ async def validate_rows(
     cols = COLUMNS[entity]
     seen: dict[str, int] = {}
     for r in rows:
+        for key in ("code", "item_group", "item_code"):
+            val = r.values.get(key)
+            if isinstance(val, str):
+                r.values[key] = val.strip().upper()  # D28 코드 정규화 (vendor_barcode 는 원문 유지)
         for c in cols:
             _validate_cell(r, c)
         code = r.values.get("code")
@@ -275,7 +294,22 @@ async def validate_rows(
                     {"row": r.row, "col": "item_group", "msg": f"활성 품목군이 아닙니다: {g}"}
                 )
     if entity == "customer":
+        # D30: commit(check_carrier) 과 같은 규칙 — 활성 택배사가 있으면 그 코드만
+        carriers = set(
+            (await session.execute(select(Carrier.code).where(Carrier.active.is_(True))))
+            .scalars()
+            .all()
+        )
         for r in rows:
+            dc = r.values.get("default_carrier")
+            if carriers and dc is not None and dc not in carriers:
+                r.errors.append(
+                    {
+                        "row": r.row,
+                        "col": "default_carrier",
+                        "msg": f"등록된 택배사가 아닙니다: {dc}",
+                    }
+                )
             addr_cols = [k for k, v in r.values.items() if k.startswith("addr_") and v is not None]
             if addr_cols and r.values.get("addr_address1") is None:
                 r.errors.append(
@@ -346,6 +380,9 @@ async def batch_out(session: AsyncSession, b: MigrationBatch) -> S.MigrationBatc
         row_count_src=b.row_count_src,
         row_count_loaded=b.row_count_loaded,
         row_count_merged=b.row_count_merged,
+        row_count_skipped=b.row_count_skipped,
+        row_count_failed=b.row_count_failed,
+        row_count_ignored=b.row_count_ignored,
         status=b.status,
         merge_policy=b.merge_policy,
         created_by=user_summary(user),
@@ -390,7 +427,7 @@ async def preview(
     if src not in ("IMS_XLS", "COUNT"):
         raise validation(["body", "source"], "source 는 IMS_XLS 또는 COUNT")
 
-    rows = parse_workbook(data, entity)
+    rows, ignored = parse_workbook(data, entity)
     result = await validate_rows(session, entity, rows)
     batch = MigrationBatch(
         source=src,
@@ -399,6 +436,8 @@ async def preview(
         source_hash=hashlib.sha256(data).hexdigest(),
         extracted_at=datetime.now(UTC),
         row_count_src=len(rows),
+        row_count_failed=len({e["row"] for e in result.errors}),
+        row_count_ignored=ignored,
         errors=result.errors,
         duplicates=result.duplicates,
         created_by=user_id,
@@ -416,6 +455,7 @@ async def preview(
         source=src,
         row_count=len(rows),
         valid=len(result.valid_rows),
+        ignored=ignored,
         errors=[S.ImportError(**e) for e in result.errors],
         duplicates=[S.ImportDuplicate(**d) for d in result.duplicates],
         rows_sample=_jsonable(sample),
@@ -482,10 +522,13 @@ async def _load_rows(
                         setattr(item, k, val)
                 new_id = item.id
             merged += 1
-            note = f"merge {r.duplicate['reason']} row {r.row}"
+            note = (
+                f"MERGED_INTO:{existing_code}"
+                if r.duplicate["reason"] == "NAME_PHONE"
+                else f"merge CODE row {r.row}"
+            )
         else:
             if entity == "customer":
-                await check_carrier(session, v.get("default_carrier"), ["body", "default_carrier"])
                 cust = Customer(code=v["code"], **_customer_fields(v))
                 session.add(cust)
                 await session.flush()
@@ -553,9 +596,16 @@ async def commit(
     if hashlib.sha256(data).hexdigest() != batch.source_hash:
         raise state_conflict(f"배치 {batch_id} 의 원본 파일 해시가 다릅니다 — 다시 업로드하세요")
 
-    rows = parse_workbook(data, batch.entity)
+    rows, ignored = parse_workbook(data, batch.entity)
     result = await validate_rows(session, batch.entity, rows)
+    # D30: 재검증 결과는 항상 배치에 남긴다 (미리보기 이후 DB 가 바뀌었을 수 있다).
+    # 상태는 PREVIEW 유지.
+    batch.errors = result.errors
+    batch.duplicates = result.duplicates
+    batch.row_count_failed = len({e["row"] for e in result.errors})
+    batch.row_count_ignored = ignored
     if result.errors and not body.skip_invalid:
+        await session.commit()
         raise ApiError(
             409,
             "IMPORT_HAS_ERRORS",
@@ -568,12 +618,24 @@ async def commit(
         loaded, merged, skipped = await _load_rows(session, batch, result, body.merge_policy)
         batch.row_count_loaded = loaded
         batch.row_count_merged = merged
+        batch.row_count_skipped = skipped
+        batch.row_count_failed = failed
         batch.merge_policy = body.merge_policy
-        batch.errors = result.errors
-        batch.duplicates = result.duplicates
         batch.status = "LOADED"
         await session.commit()
+    except ApiError as e:
+        # 적재 중 업무 검증 오류 → PREVIEW 유지 + errors 갱신, 422 VALIDATION_ERROR (D30).
+        # 재commit 허용
+        await session.rollback()
+        kept = await get_batch(session, batch_id)
+        kept.errors = result.errors + [{"row": 0, "col": "", "msg": e.message}]
+        kept.duplicates = result.duplicates
+        await session.commit()
+        raise ApiError(
+            422, "VALIDATION_ERROR", f"적재 중 검증 오류: {e.message}", kept.errors
+        ) from e
     except Exception:
+        # 적재 중 예외(DB 오류 등)에만 FAILED — 재commit 불가, 새 preview
         await session.rollback()
         failed_batch = await get_batch(session, batch_id)
         failed_batch.status = "FAILED"
