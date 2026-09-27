@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 12
     checkcode_secret: str
+    # 체크코드 비밀키 회전 (plan §5.1: 구 secret 도 검증 허용, 2세대). 비어 있으면 회전 중이 아님.
+    checkcode_secret_prev: str | None = None
+    # 시드 admin 비밀번호 (db-schema §10).
+    # 없으면 admin 행은 password_hash NULL (로그인 불가) 로 만든다.
+    seed_admin_password: str | None = None
 
     # 시간대: 표시는 Asia/Seoul, 서버 저장은 UTC (spec §13)
     tz: str = "Asia/Seoul"
