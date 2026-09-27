@@ -1,0 +1,54 @@
+# dev 스택 (plan §5.4). 실행: docker compose -f infra/docker-compose.yml up
+# 로컬 PostgreSQL 17 이 5432 를 쓰고 있어 컨테이너 postgres 는 호스트 5433 으로 노출한다.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: songwol_qr
+      POSTGRES_USER: songwol
+      POSTGRES_PASSWORD: songwol
+      TZ: Asia/Seoul
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U songwol -d songwol_qr"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    image: python:3.12-slim
+    working_dir: /srv/backend
+    command: sh -c "pip install -q -e '.[dev]' && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://songwol:songwol@postgres:5432/songwol_qr
+      JWT_SECRET: dev-jwt-secret
+      CHECKCODE_SECRET: dev-checkcode-secret
+      TZ: Asia/Seoul
+      PRINTER_HOST: ""
+      PRINTER_PORT: "9100"
+    volumes:
+      - ../backend:/srv/backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: node:24-alpine
+    working_dir: /srv/web
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    environment:
+      VITE_PROXY_TARGET: http://backend:8000
+    volumes:
+      - ../web:/srv/web
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata_dev:

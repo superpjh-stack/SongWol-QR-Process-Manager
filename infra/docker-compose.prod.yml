@@ -1,0 +1,55 @@
+# prod 초안 (plan §5.4): nginx(TLS) · backend(uvicorn 2 workers) · postgres(볼륨) · backup/partition cron
+# TODO: Dockerfile(backend/web), Let's Encrypt(certbot) 컨테이너, cron 컨테이너는 배포 웨이브에서 추가.
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      POSTGRES_DB: songwol_qr
+      TZ: Asia/Seoul
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - pgwal:/var/lib/postgresql/wal_archive   # WAL 아카이브 (RPO 1h)
+      - backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d songwol_qr"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+      # dockerfile: Dockerfile   # TODO
+    restart: unless-stopped
+    env_file: ../.env
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    volumes:
+      - artwork:/data/artwork     # 도안 파일
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - webdist:/usr/share/nginx/html:ro   # web/dist 빌드 산출물
+      - letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  pgwal:
+  backups:
+  artwork:
+  webdist:
+  letsencrypt:

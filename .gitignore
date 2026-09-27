@@ -1,0 +1,31 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# node
+node_modules/
+web/dist/
+web/dev-dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# migration samples (IMS 다운로드 원본, 개인정보 포함 가능)
+migration/samples/*
+!migration/samples/.gitkeep
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
