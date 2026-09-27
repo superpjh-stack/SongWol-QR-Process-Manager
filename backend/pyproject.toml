@@ -16,6 +16,8 @@ dependencies = [
     "jinja2>=3.1",
     "segno>=1.6",
     "openpyxl>=3.1",
+    "python-multipart>=0.0.9",
+    "bcrypt>=4.0",
     # "weasyprint>=62",  # 작업지시서 PDF (plan §3). 시스템 라이브러리(pango/cairo) 의존이 커서
     #                     # Phase 0 에서는 설치하지 않는다. B1 라벨 웨이브에서 Docker 이미지와 함께 추가.
 ]
@@ -60,5 +62,8 @@ plugins = ["pydantic.mypy"]
 exclude = ["^\\.venv/", "^alembic/"]
 
 [[tool.mypy.overrides]]
-module = ["segno", "segno.*", "jose", "jose.*", "passlib", "passlib.*"]
+module = ["segno", "segno.*", "jose", "jose.*", "passlib", "passlib.*", "openpyxl", "openpyxl.*"]
 ignore_missing_imports = true
+
+[tool.setuptools.package-data]
+app = ["domain/label/templates/*.j2"]

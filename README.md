@@ -63,6 +63,23 @@ backend/.venv/bin/python infra/scripts/create_partitions.py --months-ahead 3   #
 - 채번은 `app/core/sequence.py` (`code_sequence` 행 `SELECT … FOR UPDATE`, Asia/Seoul 일자 경계),
   체크코드·QR 파싱은 `app/core/checkcode.py` (`CHECKCODE_SECRET`, 회전 시 `CHECKCODE_SECRET_PREV`).
 
+## API (S0-3 인증 · S0-5 기준정보 · S0-6 엑셀 일괄 등록)
+- 경로·요청·응답·오류·권한의 단일 진실은 문서 폴더 `contracts/api-contract.md` (§13 델타 v0.2 우선). Swagger: `/docs`.
+- 인증: `POST /api/v1/auth/login` → JWT(12h, `Authorization: Bearer`). 단말은 `X-Station-Key` (SHA-256 해시 대조,
+  요청마다 `last_seen_at` 갱신). 작업자 로그인 `POST /auth/worker` (카드 `US-NNNN` 또는 login_id+PIN, 5회 실패 15분 잠금).
+  역할 가드는 `app/api/deps.py::require_roles`, 역할 집합은 `app/api/permissions.py`.
+- 오류는 전부 `{code, message, detail[]}` (`app/core/errors.py::ApiError` + `app/main.py` 핸들러).
+  응답 헤더 `X-Request-Id` 는 `audit_log.request_id` 로 남는다.
+- 기준정보 변경은 `app/db/audit.py` 의 `before_flush`/`after_flush_postexec` 훅이 `audit_log` 에 before/after 로 기록한다.
+- Pydantic 스키마는 `app/api/v1/schemas/*.py` (ts-types.md 와 클래스명 1:1). 서비스·라우터는 `app/domain/<도메인>/`.
+- 코드 체계(ADM-10) 저장처는 `app_setting.CODE_SETTINGS`. `seq_digits` 는 채번(`app/core/sequence.py`)이 매번 읽는다.
+  접두사는 S0 에서 SO/WO/LT/US 고정(422 `PREFIX_FIXED`).
+- 엑셀 임포트: `GET /master/import/template?entity=` → `POST /master/import/preview`(multipart, 201, PREVIEW 배치)
+  → `POST /master/import/{batch_id}/commit {merge_policy, skip_invalid?}`. 원본은 `IMPORT_DIR`(기본 `backend/var/imports`)
+  에 `{batch_id}.xlsx` 로 보관되고 commit 이 다시 읽어 재검증한다. 5MB · 5,000행. entity=stock 은 S5.
+- 단말 등록: `POST /stations` 201 응답에 `api_key`·`setup_url`·`setup_qr_png` 1회. `PUBLIC_HOST` 로 URL 을 만든다.
+- 품목군 개발 시드: `python -m app.db.seed --dev-item-groups` (TOWEL_40 · TOWEL_50, 미결 U-1).
+
 ## 테스트
 ```bash
 cd backend && .venv/bin/pytest -q

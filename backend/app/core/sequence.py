@@ -6,6 +6,9 @@
 - ``US`` 는 일자 무관: seq_date = 1970-01-01 고정 행, 코드 = ``US-{NNNN}``
   (db-schema §12-9, spec §6).
 - 하위 WO 접미사 ``-A``~``-Z`` 는 ``split_code()`` (spec §2.1: 최대 26개, 병합 금지).
+- 최소 순번 자릿수는 ``app_setting.CODE_SETTINGS.seq_digits`` (api-contract §13.3 admin #21, 4
+  또는 5).
+  행이 없으면 4. 자릿수를 넘으면 자연히 확장된다.
 
 잠금은 호출자의 트랜잭션이 끝날 때까지 유지되므로 채번은 짧은 트랜잭션 안에서 한다.
 """
@@ -19,7 +22,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.master import CodeSequence
+from app.db.models.master import AppSetting, CodeSequence
 
 Prefix = Literal["SO", "WO", "LT", "US"]
 
@@ -41,10 +44,19 @@ def seq_date_for(prefix: Prefix, now: datetime | None = None) -> date:
     return now.astimezone(TZ_SEOUL).date()
 
 
-def format_code(prefix: Prefix, seq_date: date, no: int) -> str:
+async def min_seq_digits(session: AsyncSession) -> int:
+    """app_setting CODE_SETTINGS.seq_digits (없으면 SEQ_DIGITS)."""
+    row = await session.get(AppSetting, "CODE_SETTINGS")
+    if row is None or not isinstance(row.value, dict):
+        return SEQ_DIGITS
+    digits = row.value.get("seq_digits", SEQ_DIGITS)
+    return int(digits) if isinstance(digits, int | str) else SEQ_DIGITS
+
+
+def format_code(prefix: Prefix, seq_date: date, no: int, digits: int = SEQ_DIGITS) -> str:
     if no <= 0:
         raise ValueError(f"sequence number must be positive: {no}")
-    number = f"{no:0{SEQ_DIGITS}d}"  # 9999 초과 시 자연히 5자리
+    number = f"{no:0{digits}d}"  # 최소 자릿수를 넘으면 자연히 확장 (9999 → 10000)
     if prefix == "US":
         return f"US-{number}"
     return f"{prefix}-{seq_date:%y%m%d}-{number}"
@@ -75,8 +87,9 @@ async def next_no(session: AsyncSession, prefix: Prefix, seq_date: date) -> int:
 async def next_code(session: AsyncSession, prefix: Prefix, now: datetime | None = None) -> str:
     """다음 코드. 예 ``SO-260928-0001``, ``US-0007``."""
     seq_date = seq_date_for(prefix, now)
+    digits = await min_seq_digits(session)
     no = await next_no(session, prefix, seq_date)
-    return format_code(prefix, seq_date, no)
+    return format_code(prefix, seq_date, no, digits)
 
 
 def split_code(parent_code: str, existing_suffixes: list[str] | set[str] | tuple[str, ...]) -> str:

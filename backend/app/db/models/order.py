@@ -76,6 +76,12 @@ class SalesOrder(TimestampMixin, Base):
     created_by: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT"), nullable=False
     )
+    # 0005 (§14.2, admin 필드 G) [S1]
+    cancel_reason: Mapped[str | None] = mapped_column(String(200))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT")
+    )
 
     lines: Mapped[list["SalesOrderLine"]] = relationship(
         back_populates="sales_order", order_by="SalesOrderLine.line_no"
@@ -140,6 +146,10 @@ class Design(CreatedAtMixin, Base):
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     uploaded_by: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT"), nullable=False
+    )
+    # 0005 (§14.2, admin 필드 H) [S1]
+    confirmed_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT")
     )
 
 

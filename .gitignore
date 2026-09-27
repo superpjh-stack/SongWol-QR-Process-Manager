@@ -29,3 +29,6 @@ migration/samples/*
 .DS_Store
 .idea/
 .vscode/
+
+# 엑셀 일괄 등록 원본 보관 (개인정보 포함 가능)
+backend/var/

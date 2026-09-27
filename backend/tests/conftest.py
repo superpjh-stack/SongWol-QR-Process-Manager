@@ -99,3 +99,125 @@ async def _dispose_engine_per_test() -> AsyncIterator[None]:
     from app.db.session import engine
 
     await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# S0-3 / S0-5 / S0-6 공통 픽스처: HTTP 클라이언트 · 관리자 JWT · 단말 키 · 품목군
+# ---------------------------------------------------------------------------
+import uuid  # noqa: E402
+from typing import Any  # noqa: E402
+
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+
+TEST_ADMIN_LOGIN = "t_admin"
+TEST_ADMIN_PASSWORD = "Admin1234x"  # 정책: 8자+영문+숫자
+
+
+def uniq(prefix: str, n: int = 6) -> str:
+    return f"{prefix}{uuid.uuid4().hex[:n].upper()}"
+
+
+async def ensure_user(
+    login_id: str,
+    role: str,
+    *,
+    password: str | None = None,
+    pin: str | None = None,
+    card: bool = False,
+    active: bool = True,
+) -> Any:
+    """테스트용 사용자 upsert (ORM 직접). 카드는 US 채번."""
+    from sqlalchemy import select
+
+    from app.core.hashing import hash_secret
+    from app.core.sequence import next_code
+    from app.db.models.master import AppUser
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as s:
+        u = (
+            await s.execute(select(AppUser).where(AppUser.login_id == login_id))
+        ).scalar_one_or_none()
+        if u is None:
+            u = AppUser(login_id=login_id, name=login_id, role=role)
+            s.add(u)
+        u.role = role
+        u.active = active
+        u.password_hash = hash_secret(password) if password else None
+        u.pin_hash = hash_secret(pin) if pin else None
+        u.pin_failed_count = 0
+        u.pin_locked_until = None
+        if card and not u.card_code:
+            u.card_code = await next_code(s, "US")
+        await s.commit()
+        await s.refresh(u)
+        return u
+
+
+async def ensure_station(
+    station_id: str, *, type_: str = "KIOSK", process_code: str | None = "P30"
+) -> tuple[str, str]:
+    """(station_id, api_key). 이미 있으면 키를 회전해 새 키를 돌려준다."""
+    from app.core.apikey import api_key_prefix, generate_api_key, hash_api_key
+    from app.db.models.master import Station
+    from app.db.session import SessionLocal
+
+    key = generate_api_key()
+    async with SessionLocal() as s:
+        st = await s.get(Station, station_id)
+        if st is None:
+            st = Station(id=station_id, type=type_, process_code=process_code)
+            s.add(st)
+        st.active = True
+        st.api_key_hash = hash_api_key(key)
+        st.api_key_prefix = api_key_prefix(key)
+        await s.commit()
+    return station_id, key
+
+
+async def ensure_item_group(code: str, name: str | None = None) -> str:
+    from app.db.models.master import ItemGroup
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as s:
+        if await s.get(ItemGroup, code) is None:
+            s.add(ItemGroup(code=code, name=name or code))
+            await s.commit()
+    return code
+
+
+@pytest.fixture
+async def client() -> AsyncIterator[AsyncClient]:
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+
+@pytest.fixture
+async def admin_headers(client: AsyncClient) -> dict[str, str]:
+    await ensure_user(TEST_ADMIN_LOGIN, "ADMIN", password=TEST_ADMIN_PASSWORD)
+    res = await client.post(
+        "/api/v1/auth/login", json={"login_id": TEST_ADMIN_LOGIN, "password": TEST_ADMIN_PASSWORD}
+    )
+    assert res.status_code == 200, res.text
+    return {"Authorization": f"Bearer {res.json()['access_token']}"}
+
+
+async def headers_for(client: AsyncClient, login_id: str, role: str) -> dict[str, str]:
+    await ensure_user(login_id, role, password=TEST_ADMIN_PASSWORD)
+    res = await client.post(
+        "/api/v1/auth/login", json={"login_id": login_id, "password": TEST_ADMIN_PASSWORD}
+    )
+    assert res.status_code == 200, res.text
+    return {"Authorization": f"Bearer {res.json()['access_token']}"}
+
+
+@pytest.fixture
+async def station_key() -> tuple[str, str]:
+    return await ensure_station("T-K-P30-1")
+
+
+@pytest.fixture
+async def item_group() -> str:
+    return await ensure_item_group("T_TOWEL_40", "테스트 40수")

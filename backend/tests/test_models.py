@@ -28,7 +28,7 @@ VIEWS = [
 @pytest.mark.asyncio
 async def test_all_model_tables_exist_after_upgrade() -> None:
     expected = {t.name for t in Base.metadata.sorted_tables}
-    assert len(expected) == 33
+    assert len(expected) == 37  # 0005 델타 +4 (label_template · app_setting · item_group · carrier)
     async with SessionLocal() as s:
         rows = await s.execute(
             text("SELECT tablename FROM pg_tables WHERE schemaname = :s"), {"s": SCHEMA}

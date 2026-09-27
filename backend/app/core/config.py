@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     # 시간대: 표시는 Asia/Seoul, 서버 저장은 UTC (spec §13)
     tz: str = "Asia/Seoul"
 
+    # QR URL · 단말 등록 URL 의 호스트 (api-contract §9, §13.2 admin #15). 예 https://qr.songwol.co.kr
+    public_host: str = "http://localhost:5173"
+
+    # 엑셀 일괄 등록 원본 보관 위치 (spec §12.2 「원본 엑셀 파일은 해시와 함께 보관」).
+    # commit 이 이 파일을 다시 읽는다. 기본 backend/var/imports (git 제외).
+    import_dir: str = str(_REPO_ROOT / "backend" / "var" / "imports")
+    # api-contract §13.3 admin #22: 최대 5MB · 5,000행
+    import_max_bytes: int = 5 * 1024 * 1024
+    import_max_rows: int = 5000
+
     # 라벨 프린터 (ZPL → TCP 9100). Phase 0 에서는 자리만 둔다.
     printer_host: str = ""
     printer_port: int = 9100

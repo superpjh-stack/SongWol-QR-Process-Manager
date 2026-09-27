@@ -1,0 +1,29 @@
+{#- 작업지시서 PDF 기본 양식 (api-contract §9: WO 당 1페이지, WO QR 30×30 mm, 품목·규격·색상·가공방식·수량·도안·라우팅·발행 차수).
+    WeasyPrint 렌더는 S1-5. 여기서는 플레이스홀더(admin #18)만 고정한다. -#}
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 15mm; }
+  body { font-family: sans-serif; font-size: 12pt; }
+  .qr { width: 30mm; height: 30mm; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #333; padding: 4px 6px; text-align: left; }
+</style>
+</head>
+<body>
+  <h1>작업지시서 {{ code }}</h1>
+  <img class="qr" src="{{ qr_url }}" alt="{{ code }}">
+  <p>수주 {{ so_code }} · 거래처 {{ customer_name }} · 납기 {{ due_date }}</p>
+  <p>{{ item_name }} {{ spec }} {{ color }} · {{ print_method_name }} · 수량 {{ qty_ordered }}</p>
+  {% if design_thumbnail_path %}<img src="{{ design_thumbnail_path }}" alt="도안">{% endif %}
+  <table>
+    <thead><tr><th>공정</th><th>표준 리드타임(h)</th></tr></thead>
+    <tbody>
+    {% for s in steps %}<tr><td>{{ s.process_name }}</td><td>{{ s.std_lead_hours }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <p>발행 {{ issue_no }}차 · {{ printed_at }}</p>
+</body>
+</html>

@@ -105,8 +105,10 @@ class MigrationBatch(Base):
     row_count_src: Mapped[int] = mapped_column(Integer, nullable=False)
     row_count_loaded: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     row_count_merged: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    # db-schema §7.3 은 VARCHAR(10) 이나 CHECK 값 'ROLLED_BACK' 이 11자
+    # → 0005 에서 12 로 확장 (계약 결함으로 보고)
     status: Mapped[str] = mapped_column(
-        String(10), nullable=False, server_default=text("'PREVIEW'")
+        String(12), nullable=False, server_default=text("'PREVIEW'")
     )
     created_by: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT"), nullable=False
@@ -114,6 +116,14 @@ class MigrationBatch(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # 0005 (§14.2, admin #23·#24): 미리보기 오류·중복 후보 보존, commit 시 병합 정책
+    errors: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    duplicates: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    merge_policy: Mapped[str | None] = mapped_column(String(10))
 
 
 class MigrationMap(Base):

@@ -98,6 +98,11 @@ class LabelType(StrEnum):
     WORKER_CARD = "WORKER_CARD"
 
 
+class LabelFormat(StrEnum):
+    ZPL = "ZPL"
+    HTML = "HTML"
+
+
 class ScanTargetType(StrEnum):
     SO = "SO"
     WO = "WO"

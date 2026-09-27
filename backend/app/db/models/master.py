@@ -2,6 +2,7 @@
 
 customer · customer_address · item · process · equipment · print_method · item_routing
 · routing_step · station · app_user · printer · code_sequence
++ 리비전 0005 (db-schema §14): item_group · carrier · label_template · app_setting
 """
 
 from datetime import date, datetime
@@ -21,7 +22,9 @@ from sqlalchemy import (
     Numeric,
     SmallInteger,
     String,
+    Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -29,16 +32,28 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.models._mixins import TimestampMixin
-from app.db.models.enums import EquipType, PrinterPurpose, Role, StationType, sql_in
+from app.db.models.enums import (
+    EquipType,
+    LabelFormat,
+    LabelType,
+    PrinterPurpose,
+    Role,
+    StationType,
+    sql_in,
+)
 
 __all__ = [
+    "AppSetting",
     "AppUser",
+    "Carrier",
     "CodeSequence",
     "Customer",
     "CustomerAddress",
     "Equipment",
     "Item",
+    "ItemGroup",
     "ItemRouting",
+    "LabelTemplate",
     "PrintMethod",
     "Printer",
     "Process",
@@ -107,7 +122,12 @@ class Item(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     code: Mapped[str] = mapped_column(String(30), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    item_group: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    item_group: Mapped[str] = mapped_column(
+        String(30),
+        ForeignKey("item_group.code", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     spec: Mapped[str | None] = mapped_column(String(50))
     color: Mapped[str | None] = mapped_column(String(30))
     weight_g: Mapped[int | None] = mapped_column(Integer)
@@ -177,7 +197,9 @@ class ItemRouting(TimestampMixin, Base):
     __table_args__ = (UniqueConstraint("item_group", "print_method"),)
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
-    item_group: Mapped[str] = mapped_column(String(30), nullable=False)
+    item_group: Mapped[str] = mapped_column(
+        String(30), ForeignKey("item_group.code", ondelete="RESTRICT"), nullable=False
+    )
     print_method: Mapped[str] = mapped_column(
         String(20), ForeignKey("print_method.code", ondelete="RESTRICT"), nullable=False
     )
@@ -227,6 +249,10 @@ class Station(TimestampMixin, Base):
     api_key_prefix: Mapped[str] = mapped_column(String(8), nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # 0005 (§14.2, shopfloor ②): PACK 라벨 프린터 (api-contract §13.7 선택 순서)
+    printer_id: Mapped[str | None] = mapped_column(
+        String(20), ForeignKey("printer.id", ondelete="RESTRICT")
+    )
 
 
 class AppUser(TimestampMixin, Base):
@@ -243,6 +269,12 @@ class AppUser(TimestampMixin, Base):
     pin_hash: Mapped[str | None] = mapped_column(String(128))
     password_hash: Mapped[str | None] = mapped_column(String(128))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # 0005 (§14.2, shopfloor ③ · admin #16): PIN 5회 실패 → 15분 잠금, 비밀번호 변경 시각
+    pin_failed_count: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0")
+    )
+    pin_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Printer(Base):
@@ -268,3 +300,63 @@ class CodeSequence(Base):
     prefix: Mapped[str] = mapped_column(String(4), primary_key=True)
     seq_date: Mapped[date] = mapped_column(Date, primary_key=True)
     last_no: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+
+class ItemGroup(Base):
+    """품목군 마스터 (§14.1, admin #9). 값은 미결 U-1 — 개발 시드 TOWEL_40 · TOWEL_50."""
+
+    __tablename__ = "item_group"
+
+    code: Mapped[str] = mapped_column(String(30), primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+
+class Carrier(Base):
+    """택배사 (§14.1, admin #6) [S3]. customer.default_carrier · shipment.carrier 에 FK 는 걸지
+    않는다.
+    """
+
+    __tablename__ = "carrier"
+
+    code: Mapped[str] = mapped_column(String(20), primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+
+class LabelTemplate(Base):
+    """라벨 양식 (§14.1, admin #19) [S0 테이블, S1 사용]. WORK_ORDER_PDF 만 HTML."""
+
+    __tablename__ = "label_template"
+    __table_args__ = (
+        CheckConstraint(sql_in("label_type", LabelType), name="label_type"),
+        CheckConstraint(sql_in("format", LabelFormat), name="format"),
+    )
+
+    label_type: Mapped[str] = mapped_column(String(20), primary_key=True)
+    format: Mapped[str] = mapped_column(String(5), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT")
+    )
+
+
+class AppSetting(Base):
+    """시스템 설정 key-value (§14.1). CODE_SETTINGS · STATION_OFFLINE_THRESHOLD ·
+    BOARD_SNAPSHOT_INTERVAL_SEC.
+    """
+
+    __tablename__ = "app_setting"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT")
+    )

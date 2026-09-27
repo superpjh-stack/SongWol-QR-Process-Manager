@@ -96,3 +96,26 @@ DEV_STATION_ROWS: list[StationRow] = [
 
 def as_dicts(rows: list[Any]) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
+
+
+# ---- 리비전 0005 (db-schema §14.1) ----
+
+# app_setting 시드 3키. CODE_SETTINGS 가 코드 체계 화면(ADM-10)의 저장처, 카운터는 code_sequence.
+APP_SETTING_ROWS: list[dict[str, Any]] = [
+    {
+        "key": "CODE_SETTINGS",
+        "value": {
+            "prefixes": {"SO": "SO", "WO": "WO", "LT": "LT", "US": "US"},
+            "seq_digits": 4,
+            "checkcode_key_generation": 1,
+        },
+    },
+    {"key": "STATION_OFFLINE_THRESHOLD", "value": {"warn_minutes": 30, "error_minutes": 1440}},
+    {"key": "BOARD_SNAPSHOT_INTERVAL_SEC", "value": 300},
+]
+
+# item_group 개발 시드 (미결 U-1 — 운영 값은 현장 확정). 운영 시드에는 넣지 않는다.
+DEV_ITEM_GROUP_ROWS: list[dict[str, Any]] = [
+    {"code": "TOWEL_40", "name": "타월 40수"},
+    {"code": "TOWEL_50", "name": "타월 50수"},
+]

@@ -1,0 +1,11 @@
+{#- WO 라벨 기본 양식 (db-schema §14.1 시드, api-contract §13.3 admin #18 플레이스홀더).
+    S1-6 라벨 웨이브가 실물 프린터로 검증하며 다듬는다. QR 20×20 mm 이상, 오류정정 Q. -#}
+^XA
+^CI28
+^FO30,30^BQN,2,6,Q^FDQA,{{ qr_url }}^FS
+^FO260,40^A0N,36,36^FD{{ code }}^FS
+^FO260,90^A0N,28,28^FD{{ so_code }} / {{ customer_name }}^FS
+^FO260,130^A0N,28,28^FD{{ item_name }} {{ spec }} {{ color }}^FS
+^FO260,170^A0N,28,28^FD{{ print_method_name }} {{ qty_ordered }}장 납기 {{ due_date }}^FS
+^FO260,210^A0N,22,22^FD발행 {{ issue_no }}차 {{ printed_at }}^FS
+^XZ

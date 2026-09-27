@@ -1,0 +1,11 @@
+{#- 박스 라벨 기본 양식 (api-contract §9 「박스 라벨 내용」, admin #18 플레이스홀더). S1-6 에서 실물 검증. -#}
+^XA
+^CI28
+^FO30,30^BQN,2,6,Q^FDQA,{{ qr_url }}^FS
+^FO260,40^A0N,36,36^FD{{ code }}^FS
+^FO260,90^A0N,28,28^FD{{ customer_name }}^FS
+^FO260,130^A0N,28,28^FD{{ item_name }} {{ spec }} {{ color }}^FS
+^FO260,170^A0N,28,28^FD입수 {{ qty }} / WO {{ wo_code }}^FS
+^FO260,210^A0N,28,28^FD박스 {{ box_no }}/{{ box_total }}{% if offline_seq %} (임시 #{{ offline_seq }}){% endif %}^FS
+^FO260,250^A0N,22,22^FD발행 {{ issue_no }}차 {{ printed_at }}^FS
+^XZ
