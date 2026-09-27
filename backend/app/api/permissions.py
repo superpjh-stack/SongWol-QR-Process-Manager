@@ -26,3 +26,8 @@ IMPORT_STOCK = ("ADMIN", "MANAGER")
 # 감사 로그·마이그레이션
 MIGRATION_READ = ("ADMIN", "MANAGER")
 MIGRATION_WRITE = ("ADMIN",)
+
+# 수주·WO (A2, §4 「수주 등록·변경·취소·WO 발행」 · 「수주·WO 조회」 · 「WO 분할·보류·재작업」)
+ORDER_READ = ALL_USER_ROLES  # + STATION
+ORDER_WRITE = ("ADMIN", "MANAGER", "SALES")
+WO_MANAGE = ("ADMIN", "MANAGER")  # hold · resume · cancel · close (· split · rework)

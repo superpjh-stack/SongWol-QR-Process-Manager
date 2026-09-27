@@ -18,6 +18,7 @@ dependencies = [
     "openpyxl>=3.1",
     "python-multipart>=0.0.9",
     "bcrypt>=4.0",
+    "pillow>=10.0",  # 도안 썸네일 (A2-02, png/jpg 만)
     # 작업지시서 PDF (plan §3, S1-5). 시스템 라이브러리 필요: macOS `brew install pango cairo gdk-pixbuf libffi`,
     # Debian `apt-get install libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 fonts-nanum`
     "weasyprint>=62",

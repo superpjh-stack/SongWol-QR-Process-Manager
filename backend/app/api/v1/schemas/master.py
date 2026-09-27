@@ -5,7 +5,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.api.v1.schemas.common import ApiModel, CodeStr, KstDateTime, LoginIdStr, Page
-from app.api.v1.schemas.order import LabelJob
+from app.api.v1.schemas.label_job import LabelJob
 
 PrintMethodCode = (
     str  # 시드 6종이 기본이나 기준정보 등록만으로 추가 가능 (db-schema §2.6 CHECK 없음)

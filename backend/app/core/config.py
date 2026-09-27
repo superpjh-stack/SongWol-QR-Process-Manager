@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     import_max_bytes: int = 5 * 1024 * 1024
     import_max_rows: int = 5000
 
+    # 도안 파일 보관 위치 (A2-02, api-contract §13.4 admin #25: png/jpg/jpeg/pdf/ai/svg · 20MB).
+    # ``{DESIGN_DIR}/{so_code}/{line_no}/v{n}.{ext}``. 기본 backend/var/designs (git 제외).
+    design_dir: str = str(_REPO_ROOT / "backend" / "var" / "designs")
+    design_max_bytes: int = 20 * 1024 * 1024
+
     # 라벨 프린터 (ZPL → TCP 9100). Phase 0 에서는 자리만 둔다.
     printer_host: str = ""
     printer_port: int = 9100
