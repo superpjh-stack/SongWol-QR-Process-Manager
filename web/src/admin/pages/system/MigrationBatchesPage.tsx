@@ -40,13 +40,16 @@ export function MigrationBatchesPage() {
     { key: 'extracted_at', header: '추출 시각', render: (r) => formatDateTime(r.extracted_at) },
     {
       key: '_counts',
-      header: '건수 (원본 / 적재 / 병합)',
+      header: '건수 (원본 / 적재 / 병합 / 건너뜀 / 실패 / 무시)',
       align: 'right',
       render: (r) => {
-        const ok = r.row_count_src === r.row_count_loaded + r.row_count_merged
+        // F30: src = loaded + merged + skipped + failed (+ ignored). 백엔드가 아직 안 주는 항은 0 으로 본다
+        const sum = r.row_count_loaded + r.row_count_merged + (r.row_count_skipped ?? 0) + (r.row_count_failed ?? 0) + (r.row_count_ignored ?? 0)
+        const ok = r.row_count_src === sum
+        const opt = (v: number | undefined) => (v === undefined ? '·' : formatQty(v))
         return (
-          <span className={`tabular-nums ${ok ? '' : 'font-semibold text-status-warn-fg'}`} title={ok ? '대사 일치' : `차이 ${r.row_count_src - r.row_count_loaded - r.row_count_merged}`}>
-            {formatQty(r.row_count_src)} / {formatQty(r.row_count_loaded)} / {formatQty(r.row_count_merged)} {ok ? '✓' : '≠'}
+          <span className={`tabular-nums ${ok ? '' : 'font-semibold text-status-warn-fg'}`} title={ok ? '대사 일치 (F30)' : `차이 ${r.row_count_src - sum} — 건너뜀·실패·무시 항은 백엔드 S0 fix 후 표시`}>
+            {formatQty(r.row_count_src)} / {formatQty(r.row_count_loaded)} / {formatQty(r.row_count_merged)} / {opt(r.row_count_skipped)} / {opt(r.row_count_failed)} / {opt(r.row_count_ignored)} {ok ? '✓' : '≠'}
           </span>
         )
       },
@@ -59,7 +62,7 @@ export function MigrationBatchesPage() {
 
   return (
     <>
-      <PageHeader title="마이그레이션 현황" breadcrumb="시스템 › 마이그레이션 (ADM-31)" description="엑셀 일괄 등록·IMS 이관 배치. 대사: 원본 = 적재 + 병합 (spec §12.5). 배치 상세·롤백은 [S5]" />
+      <PageHeader title="마이그레이션 현황" breadcrumb="시스템 › 마이그레이션 (ADM-31)" description="엑셀 일괄 등록·IMS 이관 배치. 대사: 원본 = 적재 + 병합 + 건너뜀 + 실패 (+ 무시) (spec §12.5 · F30). 배치 상세·롤백은 [S5]" />
       <ListToolbar params={params} withQ={false} withActive={false}>
         <Select label="대상" value={params.extra.entity ?? ''} onChange={(e) => params.setExtra('entity', e.target.value)} options={[...IMPORT_ENTITIES.map((e) => ({ value: e, label: ImportEntityLabel[e] })), { value: 'stock_txn', label: 'stock_txn' }]} placeholder="전체" wrapperClassName="w-36" />
         <Select label="상태" value={params.extra.status ?? ''} onChange={(e) => params.setExtra('status', e.target.value)} options={MIGRATION_STATUSES.map((s) => ({ value: s, label: MigrationStatusLabel[s] }))} placeholder="전체" wrapperClassName="w-36" />

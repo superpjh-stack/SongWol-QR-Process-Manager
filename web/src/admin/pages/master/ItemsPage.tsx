@@ -9,7 +9,7 @@ import { useArray, useAuth, useCreate, useList, useUpdate } from '@/shared/hooks
 import type { Item, ItemCreate, ItemGroup, ItemUpdate } from '@/shared/types'
 import { formatQty } from '../../format'
 import { canWrite } from '../../permissions'
-import { ActiveBadge, ApiErrorAlert, CodeText, ListToolbar, RowActions, ToggleActiveDialog, patchOf, serverTable, stripEmpty, useFormApiError, useListParams, zx } from '../../components'
+import { ActiveBadge, ApiErrorAlert, CodeText, ListToolbar, RowActions, ToggleActiveDialog, numOrUndef, patchOf, serverTable, stripEmpty, upperCode, useFormApiError, useListParams, zx } from '../../components'
 
 const schema = z.object({
   code: zx.req(30, '코드'),
@@ -25,14 +25,14 @@ const schema = z.object({
 })
 type Form = z.infer<typeof schema>
 const FIELDS = Object.keys(schema.shape)
-const EMPTY: Form = { code: '', name: '', item_group: '', spec: '', color: '', weight_g: Number.NaN, vendor_item_code: '', vendor_barcode: '', qty_tolerance_pct: 3.0, legacy_id: '' }
+const EMPTY: Form = { code: '', name: '', item_group: '', spec: '', color: '', weight_g: undefined, vendor_item_code: '', vendor_barcode: '', qty_tolerance_pct: 3.0, legacy_id: '' }
 const toForm = (i: Item): Form => ({
   code: i.code,
   name: i.name,
   item_group: i.item_group,
   spec: i.spec ?? '',
   color: i.color ?? '',
-  weight_g: i.weight_g ?? Number.NaN,
+  weight_g: i.weight_g ?? undefined,
   vendor_item_code: i.vendor_item_code ?? '',
   vendor_barcode: i.vendor_barcode ?? '',
   qty_tolerance_pct: i.qty_tolerance_pct,
@@ -87,7 +87,7 @@ function ItemFormModal({ open, initial, groups, onClose, onSaved }: { open: bool
             <ApiErrorAlert error={topError} />
           </div>
         ) : null}
-        <Input label="코드" required maxLength={30} readOnly={isEdit} hint={isEdit ? '수정 불가' : undefined} error={err.code?.message} {...register('code')} />
+        <Input label="코드" required maxLength={30} readOnly={isEdit} className="uppercase" hint={isEdit ? '수정 불가' : '대문자로 저장됩니다 (D28)'} error={err.code?.message} {...register('code', { setValueAs: upperCode })} />
         <Input label="명" required maxLength={100} error={err.name?.message} {...register('name')} />
         <Input
           label="품목군"
@@ -95,8 +95,9 @@ function ItemFormModal({ open, initial, groups, onClose, onSaved }: { open: bool
           maxLength={30}
           list="item-group-list"
           hint="라우팅(ADM-06) 헤더와 같은 값이어야 WO 발행 시 ROUTING_NOT_FOUND 가 나지 않습니다. 활성 품목군 코드만 허용 (admin #9)"
+          className="uppercase"
           error={err.item_group?.message}
-          {...register('item_group')}
+          {...register('item_group', { setValueAs: upperCode })}
         />
         <datalist id="item-group-list">
           {groups.map((g) => (
@@ -107,7 +108,7 @@ function ItemFormModal({ open, initial, groups, onClose, onSaved }: { open: bool
         </datalist>
         <Input label="규격" maxLength={50} placeholder="예 40×80" error={err.spec?.message} {...register('spec')} />
         <Input label="색상" maxLength={30} error={err.color?.message} {...register('color')} />
-        <NumberInput label="중량" unit="g" min={0} step={1} error={err.weight_g?.message} {...register('weight_g', { valueAsNumber: true })} />
+        <NumberInput label="중량" unit="g" min={0} step={1} error={err.weight_g?.message} {...register('weight_g', { setValueAs: numOrUndef })} />
         <Input label="협력업체 품번" maxLength={50} error={err.vendor_item_code?.message} {...register('vendor_item_code')} />
         <Input label="협력업체 바코드" maxLength={64} hint="협력업체 바코드 규격 확인 전 (spec §16-5) — 중복을 막지 않습니다" error={err.vendor_barcode?.message} {...register('vendor_barcode')} />
         <NumberInput label="수량 허용오차" unit="%" required min={0} max={50} step={0.1} hint="기본 ±3% (B4-02)" error={err.qty_tolerance_pct?.message} {...register('qty_tolerance_pct', { valueAsNumber: true })} />

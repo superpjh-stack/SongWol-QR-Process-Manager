@@ -9,7 +9,7 @@ import { useAuth, useCreate, useList, useUpdate } from '@/shared/hooks'
 import type { Customer, CustomerCreate, CustomerUpdate } from '@/shared/types'
 import { formatDateTime } from '../../format'
 import { canWrite } from '../../permissions'
-import { ActiveBadge, ApiErrorAlert, CodeText, ListToolbar, RowActions, ToggleActiveDialog, patchOf, serverTable, stripEmpty, useFormApiError, useListParams, zx } from '../../components'
+import { ActiveBadge, ApiErrorAlert, CodeText, ListToolbar, RowActions, ToggleActiveDialog, patchOf, serverTable, stripEmpty, upperCode, useFormApiError, useListParams, zx } from '../../components'
 
 const schema = z.object({
   code: zx.req(20, '코드'),
@@ -87,7 +87,7 @@ export function CustomerFormModal({ open, initial, onClose, onSaved }: { open: b
             <ApiErrorAlert error={topError} />
           </div>
         ) : null}
-        <Input label="코드" required maxLength={20} readOnly={isEdit} hint={isEdit ? '수정 불가' : 'IMS 엑셀 코드 유지(있으면)'} error={err.code?.message} {...register('code')} />
+        <Input label="코드" required maxLength={20} readOnly={isEdit} className="uppercase" hint={isEdit ? '수정 불가' : 'IMS 엑셀 코드 유지(있으면). 대문자로 저장 (D28)'} error={err.code?.message} {...register('code', { setValueAs: upperCode })} />
         <Input label="명" required maxLength={100} error={err.name?.message} {...register('name')} />
         <Input label="담당자" maxLength={50} error={err.contact_name?.message} {...register('contact_name')} />
         <Input label="연락처" maxLength={30} error={err.phone?.message} {...register('phone')} />

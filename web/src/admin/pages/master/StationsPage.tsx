@@ -10,7 +10,7 @@ import { STATION_TYPES, type Process, type Station, type StationCreate, type Sta
 import { StationTypeLabel } from '@/shared/labels'
 import { formatDateTime, relativeTime } from '../../format'
 import { canWrite } from '../../permissions'
-import { ActiveBadge, ApiErrorAlert, CodeText, ConfirmDialog, ListToolbar, RowActions, SecretReveal, ToggleActiveDialog, serverTable, useFormApiError, useListParams, zx } from '../../components'
+import { ActiveBadge, ApiErrorAlert, CodeText, ConfirmDialog, ListToolbar, RowActions, SecretReveal, ToggleActiveDialog, serverTable, upperCode, useFormApiError, useListParams, zx } from '../../components'
 
 const PROCESS_REQUIRED: readonly string[] = ['KIOSK', 'PDA', 'TOUCHPC']
 const schema = z
@@ -122,7 +122,7 @@ function StationFormModal({ open, initial, processes, onClose, onSaved }: { open
             <ApiErrorAlert error={topError} />
           </div>
         ) : null}
-        <Input label="단말 ID" required maxLength={20} readOnly={isEdit} placeholder="예 K-P30-1, PDA-P20-1" hint={isEdit ? '수정 불가' : undefined} error={err.id?.message} {...register('id')} />
+        <Input label="단말 ID" required maxLength={20} readOnly={isEdit} className="uppercase" placeholder="예 K-P30-1, PDA-P20-1" hint={isEdit ? '수정 불가' : '대문자로 저장 (D28)'} error={err.id?.message} {...register('id', { setValueAs: upperCode })} />
         <Select label="유형" required options={TYPE_OPTIONS} error={err.type?.message} {...register('type')} />
         <Select
           label="고정 공정코드"

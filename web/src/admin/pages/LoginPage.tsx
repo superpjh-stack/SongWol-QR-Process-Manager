@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { Button, Input, Spinner, useToast } from '@/shared/ui/admin'
 import { useAuth, useAuthStore } from '@/shared/hooks'
 import { ApiError } from '@/shared/api'
-import { ApiErrorAlert, useFormApiError } from '../components'
+import { ApiErrorAlert, lowerId, useFormApiError } from '../components'
 
 const schema = z.object({
   login_id: z.string().trim().min(1, '아이디를 입력하세요').max(30, '30자 이하'),
@@ -63,7 +63,7 @@ export function LoginPage() {
       <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-ad border border-line bg-surface p-6 shadow-card" noValidate>
         <h1 className="text-ad-title font-bold">송월 QR 공정관리</h1>
         {topError ? <ApiErrorAlert error={topError} onRetry={() => void onSubmit()} /> : null}
-        <Input label="아이디" required autoComplete="username" maxLength={30} autoFocus error={formState.errors.login_id?.message} {...register('login_id')} />
+        <Input label="아이디" required autoComplete="username" maxLength={30} autoFocus error={formState.errors.login_id?.message} {...register('login_id', { setValueAs: lowerId })} />
         <Input label="비밀번호" required type="password" autoComplete="current-password" error={formState.errors.password?.message} {...register('password')} />
         <Button type="submit" variant="primary" loading={busy} className="w-full">
           로그인

@@ -178,6 +178,7 @@ export function ImportPage() {
             <Stat label="정상" value={preview.valid} tone="done" />
             <Stat label="오류 행 / 오류 건" value={`${formatQty(errorRows)} / ${formatQty(preview.errors.length)}`} tone={preview.errors.length ? 'error' : undefined} />
             <Stat label="중복 후보" value={preview.duplicates.length} tone={preview.duplicates.length ? 'warn' : undefined} />
+            <Stat label="무시 (예시 행 #)" value={preview.ignored ?? 0} />
           </div>
           <div className="text-ad-xs text-ink-muted">
             batch #{preview.batch_id} · {ImportEntityLabel[preview.entity]} · 출처 {MigrationSourceLabel[preview.source]} · 적재하지 않은 배치는 현황에 PREVIEW 로 남습니다
@@ -266,8 +267,9 @@ export function ImportPage() {
                 <Stat label="건너뜀 skipped" value={result.skipped} />
                 <Stat label="실패 failed" value={result.failed} tone={result.failed ? 'warn' : undefined} />
               </div>
-              <div className={`rounded-ad border p-3 ${preview.row_count === result.loaded + result.merged + result.skipped + result.failed ? 'border-status-done-line bg-status-done-bg text-status-done-fg' : 'border-status-warn-line bg-status-warn-bg text-status-warn-fg'}`}>
-                대사: 원본 {formatQty(preview.row_count)} = 적재 {formatQty(result.loaded)} + 병합 {formatQty(result.merged)} + 건너뜀 {formatQty(result.skipped)} + 실패 {formatQty(result.failed)} (spec §12.5)
+              <div className={`rounded-ad border p-3 ${preview.row_count === result.loaded + result.merged + result.skipped + result.failed + (preview.ignored ?? 0) ? 'border-status-done-line bg-status-done-bg text-status-done-fg' : 'border-status-warn-line bg-status-warn-bg text-status-warn-fg'}`}>
+                대사: 원본 {formatQty(preview.row_count)} = 적재 {formatQty(result.loaded)} + 병합 {formatQty(result.merged)} + 건너뜀 {formatQty(result.skipped)} + 실패 {formatQty(result.failed)}
+                {' '}+ 무시 {formatQty(preview.ignored ?? 0)} (spec §12.5 · F30)
                 {result.failed > 0 ? ' — 실패 행은 마이그레이션 현황(ADM-31)에서 확인' : ''}
               </div>
               <div className="flex flex-wrap gap-2">
@@ -290,8 +292,8 @@ export function ImportPage() {
                 value={mergePolicy}
                 onChange={setMergePolicy}
                 options={[
-                  { value: 'SKIP', label: 'SKIP — 건너뛰기', hint: '기존 행을 두고 중복 행은 skipped 로 집계' },
-                  { value: 'UPDATE', label: 'UPDATE — 갱신', hint: '기존 행을 엑셀 값으로 갱신, merged 로 집계' },
+                  { value: 'SKIP', label: 'SKIP — 건너뛰기 (기본)', hint: '기존 행을 두고 중복 행은 skipped 로 집계. 상호+전화 일치(NAME_PHONE) 중복의 기본 정책 (D31)' },
+                  { value: 'UPDATE', label: 'UPDATE — 갱신', hint: '기존 행을 엑셀 값으로 갱신, merged 로 집계. NAME_PHONE 중복은 다른 코드를 합치므로 명시 선택 시에만' },
                 ]}
               />
               {preview.errors.length ? (

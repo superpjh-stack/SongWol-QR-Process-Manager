@@ -199,7 +199,7 @@ export interface LoginRequest {
 }
 export interface LoginResponse {
   access_token: string
-  token_type: 'bearer'
+  token_type?: 'bearer' // Pydantic 기본값 있음 → 선택 (DEF-QA1-006)
   expires_in: number
   user: UserSummary
 }

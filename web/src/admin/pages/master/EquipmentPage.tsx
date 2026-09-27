@@ -8,7 +8,7 @@ import { useArray, useAuth, useCreate, useList, useUpdate } from '@/shared/hooks
 import { EQUIP_TYPES, type Equipment, type EquipmentCreate, type EquipmentUpdate, type Process } from '@/shared/types'
 import { EquipTypeLabel } from '@/shared/labels'
 import { canWrite } from '../../permissions'
-import { ActiveBadge, ApiErrorAlert, CodeText, ListToolbar, RowActions, ToggleActiveDialog, serverTable, useFormApiError, useListParams, zx } from '../../components'
+import { ActiveBadge, ApiErrorAlert, CodeText, ListToolbar, RowActions, ToggleActiveDialog, serverTable, upperCode, useFormApiError, useListParams, zx } from '../../components'
 
 const schema = z.object({
   code: zx.req(20, '코드'),
@@ -79,7 +79,7 @@ function EquipmentFormModal({ open, initial, processes, onClose, onSaved }: { op
             <ApiErrorAlert error={topError} />
           </div>
         ) : null}
-        <Input label="코드" required maxLength={20} readOnly={isEdit} placeholder="예 PRT-02, EMB-01" hint={isEdit ? '수정 불가' : undefined} error={err.code?.message} {...register('code')} />
+        <Input label="코드" required maxLength={20} readOnly={isEdit} className="uppercase" placeholder="예 PRT-02, EMB-01" hint={isEdit ? '수정 불가' : '대문자로 저장 (D28)'} error={err.code?.message} {...register('code', { setValueAs: upperCode })} />
         <Input label="설비명" required maxLength={50} error={err.name?.message} {...register('name')} />
         <Select label="공정" required options={procOptions} hint="모두 P30 소속 (A1-05)" error={err.process_code?.message} {...register('process_code')} />
         <Select label="설비 유형" required options={TYPE_OPTIONS} hint="가공방식 equip_types 와 맞아야 키오스크 설비 목록에 뜹니다" error={err.equip_type?.message} {...register('equip_type')} />

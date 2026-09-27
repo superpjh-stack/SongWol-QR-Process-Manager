@@ -1,5 +1,6 @@
 export * from './client'
 export * from './errors'
+export * from './errorCodes'
 export * from './auth'
 export * from './master'
 export * from './import'

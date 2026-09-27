@@ -8,7 +8,7 @@ import { useArray, useAuth, useCreate, useUpdate } from '@/shared/hooks'
 import { EQUIP_TYPES, type EquipType, type PrintMethod, type PrintMethodCreate, type PrintMethodUpdate } from '@/shared/types'
 import { EquipTypeLabel } from '@/shared/labels'
 import { canWrite } from '../../permissions'
-import { ActiveBadge, ApiErrorAlert, CheckboxGroup, Checkbox, CodeText, RowActions, ToggleActiveDialog, useFormApiError, zx, type ActiveFilter } from '../../components'
+import { ActiveBadge, ApiErrorAlert, CheckboxGroup, Checkbox, CodeText, RowActions, ToggleActiveDialog, upperCode, useFormApiError, zx, type ActiveFilter } from '../../components'
 
 const schema = z.object({
   code: zx.upperCode(20, '코드'),
@@ -73,7 +73,7 @@ function PrintMethodFormModal({ open, initial, onClose, onSaved }: { open: boole
     >
       <form onSubmit={onSubmit} className="grid grid-cols-1 gap-4" noValidate>
         {topError ? <ApiErrorAlert error={topError} /> : null}
-        <Input label="코드" required maxLength={20} readOnly={isEdit} hint={isEdit ? '수정 불가' : '영문 대문자 (api-contract §1)'} error={err.code?.message} {...register('code')} />
+        <Input label="코드" required maxLength={20} readOnly={isEdit} className="uppercase" hint={isEdit ? '수정 불가' : '영문 대문자 (api-contract §1)'} error={err.code?.message} {...register('code', { setValueAs: upperCode })} />
         <Input label="명" required maxLength={30} error={err.name?.message} {...register('name')} />
         <Controller
           control={control}

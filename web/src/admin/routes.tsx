@@ -8,6 +8,7 @@ import { NotReady } from './pages/NotReady'
 import { CustomersPage } from './pages/master/CustomersPage'
 import { CustomerDetailPage } from './pages/master/CustomerDetailPage'
 import { ItemsPage } from './pages/master/ItemsPage'
+import { ItemGroupsPage } from './pages/master/ItemGroupsPage'
 import { PrintMethodsPage } from './pages/master/PrintMethodsPage'
 import { ProcessesPage } from './pages/master/ProcessesPage'
 import { EquipmentPage } from './pages/master/EquipmentPage'
@@ -45,6 +46,7 @@ export const adminRoute: RouteObject = {
     { path: 'master/customers', element: guard('master.customers', <CustomersPage />) },
     { path: 'master/customers/:id', element: guard('master.customers', <CustomerDetailPage />) },
     { path: 'master/items', element: guard('master.items', <ItemsPage />) },
+    { path: 'master/item-groups', element: guard('master.item-groups', <ItemGroupsPage />) },
     { path: 'master/print-methods', element: guard('master.print-methods', <PrintMethodsPage />) },
     { path: 'master/processes', element: guard('master.processes', <ProcessesPage />) },
     { path: 'master/equipment', element: guard('master.equipment', <EquipmentPage />) },

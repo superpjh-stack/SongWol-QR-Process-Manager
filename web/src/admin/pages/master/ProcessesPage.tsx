@@ -9,18 +9,18 @@ import { processesApi } from '@/shared/api'
 import { REQUIRED_INPUTS, type Process, type ProcessCreate, type ProcessUpdate, type RequiredInput } from '@/shared/types'
 import { RequiredInputLabel } from '@/shared/labels'
 import { canCreateProcess, canWrite } from '../../permissions'
-import { ActiveBadge, ApiErrorAlert, CheckboxGroup, Checkbox, CodeText, RowActions, ToggleActiveDialog, useFormApiError, zx } from '../../components'
+import { ActiveBadge, ApiErrorAlert, CheckboxGroup, Checkbox, CodeText, RowActions, ToggleActiveDialog, numOrUndef, upperCode, useFormApiError, zx } from '../../components'
 
 const schema = z.object({
   code: z.string().trim().min(1, '코드를 입력하세요').max(3, '3자 이하 (VARCHAR(3))'),
   name: zx.req(30, '공정명'),
-  seq: zx.int(0, 32767),
+  seq: z.number({ error: '순서를 입력하세요' }).int('정수').min(0, '0 이상').max(32767, '32767 이하'),
   requires_equipment: z.boolean(),
   required_inputs: z.array(z.enum(REQUIRED_INPUTS)),
 })
 type Form = z.infer<typeof schema>
 const FIELDS = Object.keys(schema.shape)
-const EMPTY: Form = { code: '', name: '', seq: Number.NaN, requires_equipment: false, required_inputs: [] }
+const EMPTY: Partial<Form> = { code: '', name: '', requires_equipment: false, required_inputs: [] } // seq 는 빈칸 (NaN 금지, DEF-QA2-006)
 const INPUT_OPTIONS = REQUIRED_INPUTS.map((v) => ({ value: v, label: `${v} ${RequiredInputLabel[v]}` }))
 const toForm = (p: Process): Form => ({ code: p.code, name: p.name, seq: p.seq, requires_equipment: p.requires_equipment, required_inputs: p.required_inputs.filter((v): v is RequiredInput => (REQUIRED_INPUTS as readonly string[]).includes(v)) })
 
@@ -77,8 +77,8 @@ function ProcessFormModal({ open, initial, onClose, onSaved }: { open: boolean; 
       <form onSubmit={onSubmit} className="grid grid-cols-1 gap-4" noValidate>
         {topError ? <ApiErrorAlert error={topError} /> : null}
         <div className="grid grid-cols-2 gap-4">
-          <Input label="코드" required maxLength={3} readOnly={isEdit} hint={isEdit ? '수정 불가' : '시드는 P + 2자리 (형식 규칙 없음)'} error={err.code?.message} {...register('code')} />
-          <NumberInput label="순서" required min={0} step={1} hint="UK — 중복이면 409" error={err.seq?.message} {...register('seq', { valueAsNumber: true })} />
+          <Input label="코드" required maxLength={3} readOnly={isEdit} className="uppercase" hint={isEdit ? '수정 불가' : '시드는 P + 2자리. 대문자로 저장 (D28)'} error={err.code?.message} {...register('code', { setValueAs: upperCode })} />
+          <NumberInput label="순서" required min={0} step={1} hint="UK — 중복이면 409" error={err.seq?.message} {...register('seq', { setValueAs: numOrUndef })} />
         </div>
         <Input label="공정명" required maxLength={30} error={err.name?.message} {...register('name')} />
         <Checkbox label="설비 필수" hint="true 면 스캔 시 equipment_code 필수 (api-contract §5.1)" {...register('requires_equipment')} />

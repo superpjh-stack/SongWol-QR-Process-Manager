@@ -8,6 +8,7 @@
  * - 파일 다운로드(xlsx·PDF)는 `downloadBlob()` — JWT 헤더가 필요해 <a href> 를 쓰지 않는다 (§0.3).
  */
 import type { ApiError as ApiErrorBody } from '../types'
+import { ERROR_CODE_MESSAGES } from './errorCodes'
 
 export const BASE_URL = ''
 export const API_PREFIX = '/api/v1'
@@ -20,13 +21,16 @@ export class ApiError extends Error {
   readonly code: string
   readonly detail: ApiErrorDetail
   readonly body: unknown
-  constructor(status: number, code: string, message: string, detail: ApiErrorDetail = [], body: unknown = null) {
+  /** 429 `Retry-After` 초 (없으면 null) */
+  readonly retryAfter: number | null
+  constructor(status: number, code: string, message: string, detail: ApiErrorDetail = [], body: unknown = null, retryAfter: number | null = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.detail = detail
     this.body = body
+    this.retryAfter = retryAfter
   }
 }
 
@@ -63,21 +67,25 @@ const STATUS_FALLBACK: Record<number, { code: string; message: string }> = {
   409: { code: 'STATE_CONFLICT', message: '현재 상태에서 처리할 수 없습니다' },
   422: { code: 'VALIDATION_ERROR', message: '입력값을 확인하세요' },
   423: { code: 'LOCKED', message: '잠시 후 다시 시도하세요' },
+  429: { code: 'TOO_MANY_REQUESTS', message: '요청이 너무 많습니다 — 잠시 후 다시 시도하세요' },
   500: { code: 'INTERNAL_ERROR', message: '서버 오류 — 잠시 후 다시 시도하세요' },
   502: { code: 'BAD_GATEWAY', message: '서비스에 연결할 수 없습니다' },
   503: { code: 'DB_UNAVAILABLE', message: '서비스 일시 중단' },
 }
 
-export function toApiError(status: number, parsed: unknown, fallbackMessage?: string): ApiError {
+/** 응답 → ApiError. message: 서버 message → 코드표(§14.2) → 상태별 기본 */
+export function toApiError(status: number, parsed: unknown, fallbackMessage?: string, headers?: Headers): ApiError {
   const fb = STATUS_FALLBACK[status] ?? { code: `HTTP_${status}`, message: fallbackMessage ?? `요청 실패 (${status})` }
+  const ra = headers?.get('Retry-After')
+  const retryAfter = ra !== null && ra !== undefined && /^\d+$/.test(ra.trim()) ? Number(ra) : null
   if (parsed && typeof parsed === 'object') {
     const o = parsed as Record<string, unknown>
     const code = typeof o.code === 'string' ? o.code : fb.code
-    const message = typeof o.message === 'string' ? o.message : fb.message
+    const message = typeof o.message === 'string' && o.message ? o.message : (ERROR_CODE_MESSAGES[code] ?? fb.message)
     const detail = Array.isArray(o.detail) ? (o.detail as ApiErrorDetail) : []
-    return new ApiError(status, code, message, detail, parsed)
+    return new ApiError(status, code, message, detail, parsed, retryAfter)
   }
-  return new ApiError(status, fb.code, fb.message, [], parsed)
+  return new ApiError(status, fb.code, fb.message, [], parsed, retryAfter)
 }
 
 export const NETWORK_ERROR = { code: 'NETWORK_ERROR', message: '네트워크 연결을 확인하세요' } as const
@@ -145,7 +153,7 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 
   if (!res.ok) {
     if (res.status === 401) handleUnauthorized(opts)
-    throw toApiError(res.status, parsed)
+    throw toApiError(res.status, parsed, undefined, res.headers)
   }
   return parsed as T
 }
@@ -203,7 +211,7 @@ export async function downloadBlob(path: string, fallbackName = 'download'): Pro
   if (!res.ok) {
     const parsed = await parseBody(res)
     if (res.status === 401) handleUnauthorized({})
-    throw toApiError(res.status, parsed)
+    throw toApiError(res.status, parsed, undefined, res.headers)
   }
   const blob = await res.blob()
   const filename = filenameFromDisposition(res.headers.get('Content-Disposition')) ?? fallbackName

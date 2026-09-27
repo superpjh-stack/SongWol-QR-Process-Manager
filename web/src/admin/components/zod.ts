@@ -21,7 +21,8 @@ export const zx = {
       .max(max, `${max}자 이하`)
       .refine((v) => v === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), '이메일 형식이 아닙니다'),
   /** 숫자 input (빈칸 = NaN) → 선택 정수 ≥0 */
-  optInt: (min = 0) => z.union([z.nan(), z.number().int('정수').min(min, `${min} 이상의 정수`)]),
+  /** 선택 정수 (빈칸 = undefined). NumberInput 에는 `register(name, { setValueAs: numOrUndef })` 를 함께 쓴다 (DEF-QA2-006) */
+  optInt: (min = 0) => z.number({ error: '숫자를 입력하세요' }).int('정수').min(min, `${min} 이상의 정수`).optional(),
   num: (min: number, max: number, step?: number) =>
     z
       .number({ error: '숫자를 입력하세요' })
@@ -37,3 +38,14 @@ export const zx = {
       .min(8, '8자 이상')
       .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), '영문과 숫자를 각 1자 이상 포함'),
 }
+
+/** NumberInput 값 → number | undefined (빈칸은 undefined, NaN 금지 — DEF-QA2-006) */
+export const numOrUndef = (v: unknown): number | undefined => {
+  if (v === '' || v === null || v === undefined) return undefined
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isNaN(n) ? undefined : n
+}
+/** login_id 정규화: trim + 소문자 (api §14.4 D28) */
+export const lowerId = (v: unknown): unknown => (typeof v === 'string' ? v.trim().toLowerCase() : v)
+/** 코드 계열 입력 정규화: trim + 대문자 (progress D28). `register(name, { setValueAs: upperCode })` + className="uppercase" */
+export const upperCode = (v: unknown): unknown => (typeof v === 'string' ? v.trim().toUpperCase() : v)

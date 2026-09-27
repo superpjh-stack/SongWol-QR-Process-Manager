@@ -65,7 +65,8 @@ export interface Notification {
 export interface AuditLog {
   id: number
   table_name: string
-  row_id: number
+  row_id: number | null // F24: 자연키 테이블은 null + row_key
+  row_key: string | null
   action: 'INSERT' | 'UPDATE' | 'DELETE' | 'APPROVE'
   before: Record<string, unknown> | null
   after: Record<string, unknown> | null
@@ -83,6 +84,10 @@ export interface MigrationBatch {
   row_count_src: number
   row_count_loaded: number
   row_count_merged: number
+  /** F30 대사식 `src = loaded + merged + skipped + failed (+ ignored)` 용 — 백엔드 S0 fix 대기 → 선택 */
+  row_count_skipped?: number
+  row_count_failed?: number
+  row_count_ignored?: number
   status: MigrationStatus
   merge_policy: 'SKIP' | 'UPDATE' | null
   created_by: UserSummary

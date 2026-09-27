@@ -11,7 +11,7 @@ import { RoleLabel } from '@/shared/labels'
 import { StatusBadge } from '@/shared/ui'
 import { formatDateTime } from '../../format'
 import { canWrite } from '../../permissions'
-import { ActiveBadge, ApiErrorAlert, Checkbox, CodeText, ListToolbar, RowActions, ToggleActiveDialog, serverTable, useFormApiError, useListParams, zx } from '../../components'
+import { ActiveBadge, ApiErrorAlert, Checkbox, CodeText, ListToolbar, RowActions, ToggleActiveDialog, lowerId, serverTable, useFormApiError, useListParams, zx } from '../../components'
 
 const ROLE_OPTIONS = ROLES.map((r) => ({ value: r, label: `${r} ${RoleLabel[r]}` }))
 const CARD_ROLES: readonly string[] = ['WORKER', 'MANAGER']
@@ -88,7 +88,7 @@ function UserFormModal({ open, initial, onClose, onSaved }: { open: boolean; ini
             <ApiErrorAlert error={topError} />
           </div>
         ) : null}
-        <Input label="로그인 ID" required maxLength={30} readOnly={isEdit} autoComplete="off" hint={isEdit ? '수정 불가' : undefined} error={err.login_id?.message} {...register('login_id')} />
+        <Input label="로그인 ID" required maxLength={30} readOnly={isEdit} autoComplete="off" className="lowercase" hint={isEdit ? '수정 불가' : '소문자로 저장 (D28)'} error={err.login_id?.message} {...register('login_id', { setValueAs: lowerId })} />
         <Input label="이름" required maxLength={50} error={err.name?.message} {...register('name')} />
         <Select label="역할" required options={ROLE_OPTIONS} error={err.role?.message} {...register('role')} />
         {!isEdit ? (

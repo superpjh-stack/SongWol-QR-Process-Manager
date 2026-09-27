@@ -25,7 +25,15 @@ export interface CustomerCreate {
   default_carrier?: string
   legacy_id?: string
 }
-export type CustomerUpdate = Partial<Omit<CustomerCreate, 'code'>>
+/** 독립 정의 (CD-2). code 불변 → 422 READ_ONLY_FIELD. `?: T | null` = PATCH 로 비울 수 있음 */
+export interface CustomerUpdate {
+  name?: string
+  contact_name?: string | null
+  phone?: string | null
+  email?: string | null
+  default_carrier?: string | null
+  legacy_id?: string | null
+}
 export interface CustomerAddress {
   id: number
   customer_id: number
@@ -38,9 +46,26 @@ export interface CustomerAddress {
   is_default: boolean
   active: boolean
 }
-export type CustomerAddressInput = Omit<CustomerAddress, 'id' | 'customer_id' | 'active'>
-/** PATCH /customers/{id}/addresses/{aid} — 보낸 필드만 (백엔드 schemas/master.py, ts-types 누락 → 추가) */
-export type CustomerAddressUpdate = Partial<CustomerAddressInput>
+/** 독립 정의 (CD-2, DEF-QA1-006 ×5). is_default 기본 false */
+export interface CustomerAddressInput {
+  label: string
+  receiver?: string | null
+  phone?: string | null
+  postal_code?: string | null
+  address1: string
+  address2?: string | null
+  is_default?: boolean
+}
+/** F26 — PATCH /customers/{id}/addresses/{addr_id} */
+export interface CustomerAddressUpdate {
+  label?: string
+  receiver?: string | null
+  phone?: string | null
+  postal_code?: string | null
+  address1?: string
+  address2?: string | null
+  is_default?: boolean
+}
 
 export interface Item {
   id: number
@@ -70,7 +95,18 @@ export interface ItemCreate {
   qty_tolerance_pct?: number
   legacy_id?: string
 }
-export type ItemUpdate = Partial<Omit<ItemCreate, 'code'>>
+/** 독립 정의 (CD-2) */
+export interface ItemUpdate {
+  name?: string
+  item_group?: string
+  spec?: string | null
+  color?: string | null
+  weight_g?: number | null
+  vendor_item_code?: string | null
+  vendor_barcode?: string | null
+  qty_tolerance_pct?: number | null
+  legacy_id?: string | null
+}
 
 export interface Process {
   code: ProcessCode | string
@@ -91,21 +127,27 @@ export interface PrintMethodUpdate {
   name?: string
   equip_types?: EquipType[]
 }
-/** POST /print-methods (백엔드 추가, ts-types 누락) */
+/** F26 — POST /print-methods. code `^[A-Z][A-Z0-9_]*$`, 기본 [] / false */
 export interface PrintMethodCreate {
   code: string
   name: string
-  equip_types: EquipType[]
-  skips_p30: boolean
+  equip_types?: EquipType[]
+  skips_p30?: boolean
 }
+/** 기본 false / [] (DEF-QA1-006 ×2) */
 export interface ProcessCreate {
   code: string
   name: string
   seq: number
-  requires_equipment: boolean
-  required_inputs: RequiredInput[]
+  requires_equipment?: boolean
+  required_inputs?: RequiredInput[]
 }
-export type ProcessUpdate = Partial<Omit<ProcessCreate, 'code'>>
+export interface ProcessUpdate {
+  name?: string
+  seq?: number
+  requires_equipment?: boolean
+  required_inputs?: RequiredInput[]
+}
 /** POST /processes/reorder (백엔드 추가) */
 export interface ProcessReorderRequest {
   codes: string[]
@@ -118,8 +160,18 @@ export interface Equipment {
   equip_type: EquipType
   active: boolean
 }
-export type EquipmentCreate = Omit<Equipment, 'id' | 'active'>
-export type EquipmentUpdate = Partial<Omit<EquipmentCreate, 'code'>>
+/** process_code 기본 'P30' (DEF-QA1-006) */
+export interface EquipmentCreate {
+  code: string
+  name: string
+  process_code?: string
+  equip_type: EquipType
+}
+export interface EquipmentUpdate {
+  name?: string
+  process_code?: string
+  equip_type?: EquipType
+}
 export interface ItemGroup {
   code: string
   name: string
@@ -150,7 +202,13 @@ export interface RoutingStep {
   std_lead_hours: number
   tolerance_pct: number | null
 }
-export type RoutingStepInput = Omit<RoutingStep, 'id'>
+/** 독립 정의 (DEF-QA1-006). tolerance_pct 빈칸 = 품목 qty_tolerance_pct */
+export interface RoutingStepInput {
+  seq: number
+  process_code: string
+  std_lead_hours: number
+  tolerance_pct?: number | null
+}
 export interface Routing {
   id: number
   item_group: string
@@ -227,7 +285,11 @@ export interface UserCreate {
   pin?: string
   issue_card?: boolean
 } // issue_card 기본: role∈{WORKER,MANAGER} 이면 true (⑥)
-export type UserUpdate = Partial<Pick<UserCreate, 'name' | 'role'>>
+/** 독립 정의 */
+export interface UserUpdate {
+  name?: string
+  role?: Role
+}
 /** POST /users/{id}/set-pin · set-password (백엔드 추가) */
 export interface SetPinRequest {
   pin: string
@@ -261,7 +323,14 @@ export interface PrinterCreate {
   purpose: 'PRODUCTION' | 'PACKING'
   location?: string
 }
-export type PrinterUpdate = Partial<Omit<PrinterCreate, 'id'>>
+/** 독립 정의 */
+export interface PrinterUpdate {
+  name?: string
+  host?: string
+  port?: number
+  purpose?: 'PRODUCTION' | 'PACKING'
+  location?: string | null
+}
 export interface LabelTemplate {
   label_type: LabelType
   format: 'ZPL' | 'HTML'
@@ -274,7 +343,7 @@ export interface LabelTemplate {
 export interface LabelTemplateUpdate {
   body: string
 }
-/** 접두사 (백엔드 CodePrefixes). S0 는 SO/WO/LT/US 고정 — 변경 시 422 PREFIX_FIXED */
+/** F26. S0 고정 — 다른 값 PUT 시 422 PREFIX_FIXED (api §14.4 F25) */
 export interface CodePrefixes {
   SO: string
   WO: string
@@ -310,6 +379,8 @@ export interface ImportPreview {
   errors: ImportError[]
   duplicates: ImportDuplicate[]
   rows_sample: Record<string, unknown>[]
+  /** `#` 로 시작하는 예시 행 무시 건수 (D29, ts-types v0.3 필수). 백엔드 S0 fix 커밋 전 응답에는 없을 수 있어 화면은 `?? 0` 으로 읽는다 */
+  ignored: number
 }
 export interface ImportCommitRequest {
   merge_policy: 'SKIP' | 'UPDATE'

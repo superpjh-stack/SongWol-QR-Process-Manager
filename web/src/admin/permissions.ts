@@ -19,6 +19,7 @@ export type ScreenKey =
   | 'trace' // ADM-27
   | 'master.customers' // ADM-01
   | 'master.items' // ADM-02
+  | 'master.item-groups' // ADM-02b (D32)
   | 'master.print-methods' // ADM-03
   | 'master.processes' // ADM-04
   | 'master.equipment' // ADM-05
@@ -48,6 +49,8 @@ const MATRIX: Record<ScreenKey, Row> = {
   trace: ['R', 'R', 'R', 'R', 'R'],
   'master.customers': ['W', 'R', 'W', 'R', null],
   'master.items': ['W', 'R', 'W', 'R', null],
+  // 품목군·택배사 마스터 (api-contract §13.8): ADMIN W · MANAGER W · SALES R · WORKER R
+  'master.item-groups': ['W', 'W', 'R', 'R', null],
   'master.print-methods': ['W', 'W', 'R', 'R', null],
   'master.processes': ['W', 'W', 'R', 'R', null],
   'master.equipment': ['W', 'W', 'R', 'R', null],

@@ -45,6 +45,7 @@ export const NAV_TREE: Group[] = [
     items: [
       { to: '/admin/master/customers', label: '거래처', screen: 'master.customers' },
       { to: '/admin/master/items', label: '품목', screen: 'master.items' },
+      { to: '/admin/master/item-groups', label: '품목군', screen: 'master.item-groups' },
       { to: '/admin/master/print-methods', label: '가공방식', screen: 'master.print-methods' },
       { to: '/admin/master/processes', label: '공정', screen: 'master.processes' },
       { to: '/admin/master/equipment', label: '설비', screen: 'master.equipment' },

@@ -47,6 +47,22 @@ describe('client', () => {
     expect(toErrorView(e).retryable).toBe(false)
   })
 
+  it('429 LOGIN_LOCKED 는 Retry-After 초를 분으로 표시하고 재시도 버튼이 없다 (§14.2)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(429, { code: 'LOGIN_LOCKED', message: '', detail: [] }, { 'Retry-After': '900' }))
+    const e = (await api.post('/api/v1/auth/login', {}, { skipUnauthorized: true }).catch((x: unknown) => x)) as ApiError
+    expect(e.retryAfter).toBe(900)
+    expect(e.message).toBe('로그인이 잠겼습니다 — 잠시 후 다시 시도')
+    expect(toErrorView(e)).toMatchObject({ title: '로그인 잠금', message: '로그인이 잠겼습니다 — 15분 후 다시 시도', retryable: false })
+    expect(toErrorView(new ApiError(409, 'PIN_NOT_SET', '', []))).toMatchObject({ title: 'PIN 미설정', message: 'PIN 이 설정되지 않았습니다 — 관리자에게 요청하세요', retryable: false })
+    expect(toErrorView(new ApiError(422, 'PREFIX_FIXED', '', []))).toMatchObject({ title: '접두사는 변경할 수 없습니다', retryable: false })
+  })
+
+  it('서버 message 가 비면 §14.2 코드표 기본 문구를 쓴다', () => {
+    expect(toApiError(409, { code: 'DUPLICATE_CODE', detail: [] }).message).toBe('이미 사용 중인 코드입니다')
+    expect(toApiError(422, { code: 'BAD_TEMPLATE', message: '', detail: [] }).message).toBe('템플릿 양식이 아닙니다')
+    expect(toApiError(404, { code: 'ITEM_GROUP_NOT_FOUND', message: '품목군 TOWEL_99 을(를) 찾을 수 없습니다', detail: [] }).message).toBe('품목군 TOWEL_99 을(를) 찾을 수 없습니다')
+  })
+
   it('본문이 JSON 이 아니면 상태별 기본 code·message 를 쓴다', () => {
     const e = toApiError(503, '<html>gateway</html>')
     expect(e.code).toBe('DB_UNAVAILABLE')
