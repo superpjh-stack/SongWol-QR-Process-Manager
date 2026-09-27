@@ -1,5 +1,10 @@
+import { lazy, Suspense } from 'react'
 import { createBrowserRouter, Link } from 'react-router-dom'
 import { Placeholder } from './Placeholder'
+import { adminRoute, loginRoute } from '@/admin/routes'
+
+// dev 전용 공용 컴포넌트 갤러리 (웨이브 B 디자인). prod 번들에는 들어가지 않는다.
+const DevGallery = lazy(() => import('./DevGallery'))
 
 // 화면 그룹 (spec §9). 각 라우트 트리는 다음 웨이브에서 해당 디렉터리로 옮긴다.
 export const router = createBrowserRouter([
@@ -18,9 +23,22 @@ export const router = createBrowserRouter([
       </main>
     ),
   },
-  { path: '/admin/*', element: <Placeholder name="관리자 웹" spec="§9.1" /> },
+  loginRoute,
+  adminRoute,
   { path: '/kiosk/*', element: <Placeholder name="공정 키오스크" spec="§9.2" /> },
   { path: '/pda/*', element: <Placeholder name="PDA / 입고·발송" spec="§9.3" /> },
   { path: '/board/*', element: <Placeholder name="현황판" spec="§9.5" /> },
   { path: '/q/:code', element: <Placeholder name="QR 조회 페이지" spec="§9.4" showCode /> },
+  ...(import.meta.env.DEV
+    ? [
+        {
+          path: '/dev/gallery/*',
+          element: (
+            <Suspense fallback={null}>
+              <DevGallery />
+            </Suspense>
+          ),
+        },
+      ]
+    : []),
 ])

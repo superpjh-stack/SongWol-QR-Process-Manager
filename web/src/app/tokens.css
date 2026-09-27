@@ -1,0 +1,151 @@
+/*
+ * 디자인 토큰 (Tailwind 4 @theme). 문서: {DOCS_DIR}/specs/design-tokens.md
+ *
+ * 두 밀도:
+ *   shopfloor  키오스크·PDA·현황판 — 큰 글씨(≥18px)·큰 버튼(≥48px, 권장 64px)·고대비   (spec §13 사용성)
+ *   admin      관리자 PC 웹 — 14px 기본
+ * 상태 의미색은 색만으로 구분하지 않는다 — StatusBadge 가 아이콘+문구를 병기한다 (plan §5.2 접근성).
+ * 값 전부 spec 에 없는 「기본값」이다. 바꿀 때는 design-tokens.md 도 같이 고친다.
+ */
+
+@theme {
+  /* ── 폰트 ─────────────────────────────────────────────────────── */
+  --font-sans:
+    'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo',
+    'Noto Sans KR', 'Malgun Gothic', 'Segoe UI', Roboto, sans-serif;
+  --font-mono:
+    'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', 'D2Coding', monospace;
+
+  /* ── 브랜드·중립 ──────────────────────────────────────────────── */
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #d9e6ff;
+  --color-brand-500: #2f6fed;
+  --color-brand-600: #1f5bd6;
+  --color-brand-700: #1a49ad;
+  --color-brand-900: #0f172a; /* PWA theme_color 와 동일 */
+
+  --color-ink: #0f172a; /* 본문 글자 */
+  --color-ink-muted: #475569; /* 보조 글자 (흰 배경 대비 7.5:1) */
+  --color-ink-faint: #94a3b8; /* placeholder 전용 */
+  --color-surface: #ffffff;
+  --color-surface-2: #f5f7fa; /* 페이지 배경 */
+  --color-surface-3: #e8edf3; /* 구분·hover */
+  --color-line: #d5dce6;
+  --color-line-strong: #94a3b8;
+
+  /* ── 상태 의미색 (fg = 글자·아이콘, bg = 배지 배경, line = 테두리) ─ */
+  /* 대기 WAITING / DRAFT / NONE */
+  --color-status-waiting-fg: #475569;
+  --color-status-waiting-bg: #f1f5f9;
+  --color-status-waiting-line: #cbd5e1;
+  /* 진행 STARTED / IN_PROGRESS / ISSUED */
+  --color-status-progress-fg: #1d4ed8;
+  --color-status-progress-bg: #dbeafe;
+  --color-status-progress-line: #93c5fd;
+  /* 완료 DONE / PACKED / SHIPPED / CLOSED / FULL */
+  --color-status-done-fg: #15803d;
+  --color-status-done-bg: #dcfce7;
+  --color-status-done-line: #86efac;
+  /* 추정완료 DONE_ESTIMATED (반장 승인 보정) */
+  --color-status-estimated-fg: #0f766e;
+  --color-status-estimated-bg: #ccfbf1;
+  --color-status-estimated-line: #5eead4;
+  /* 부분 PARTIAL */
+  --color-status-partial-fg: #b45309;
+  --color-status-partial-bg: #fef3c7;
+  --color-status-partial-line: #fcd34d;
+  /* 경고 WARN / 승인 필요 / ON_HOLD / OVER / 지연 위험 */
+  --color-status-warn-fg: #c2410c;
+  --color-status-warn-bg: #ffedd5;
+  --color-status-warn-line: #fdba74;
+  /* 오류 REJECT / CANCELLED / 납기 초과 */
+  --color-status-error-fg: #b91c1c;
+  --color-status-error-bg: #fee2e2;
+  --color-status-error-line: #fca5a5;
+  /* 오프라인 · 미전송 */
+  --color-status-offline-fg: #6d28d9;
+  --color-status-offline-bg: #ede9fe;
+  --color-status-offline-line: #c4b5fd;
+  /* 생략 SKIPPED */
+  --color-status-skipped-fg: #52525b;
+  --color-status-skipped-bg: #f4f4f5;
+  --color-status-skipped-line: #d4d4d8;
+
+  /* ── 크기: 현장(shopfloor) ────────────────────────────────────── */
+  --spacing-touch-min: 48px; /* 버튼 최소 (spec §13) */
+  --spacing-touch: 64px; /* 버튼 권장 */
+  --spacing-touch-lg: 88px; /* 주요 동작 (완료·확인) */
+  --spacing-key: 72px; /* 숫자 키패드 키 */
+  --spacing-touch-gap: 12px; /* 버튼 사이 (장갑 오터치 방지) */
+
+  --text-sf-body: 18px; /* 최소 글씨 (spec §13) */
+  --text-sf-body--line-height: 1.4;
+  --text-sf-lg: 24px;
+  --text-sf-lg--line-height: 1.35;
+  --text-sf-xl: 32px;
+  --text-sf-xl--line-height: 1.25;
+  --text-sf-2xl: 44px;
+  --text-sf-2xl--line-height: 1.15;
+  --text-sf-num: 56px; /* 키패드 값 표시 */
+  --text-sf-num--line-height: 1.1;
+
+  /* ── 크기: 관리자(admin) ──────────────────────────────────────── */
+  --text-ad-xs: 12px;
+  --text-ad-xs--line-height: 1.4;
+  --text-ad-body: 14px;
+  --text-ad-body--line-height: 1.5;
+  --text-ad-lg: 16px;
+  --text-ad-lg--line-height: 1.5;
+  --text-ad-title: 20px;
+  --text-ad-title--line-height: 1.3;
+  --spacing-ctl: 36px; /* 관리자 입력·버튼 높이 */
+  --spacing-sidebar: 232px;
+
+  /* ── 모서리·그림자 ────────────────────────────────────────────── */
+  --radius-sf: 14px;
+  --radius-ad: 6px;
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 3px rgb(15 23 42 / 0.1);
+  --shadow-modal: 0 12px 32px rgb(15 23 42 / 0.24);
+
+  /* ── 애니메이션 ───────────────────────────────────────────────── */
+  --animate-toast-in: toast-in 160ms ease-out;
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background: var(--color-surface-2);
+    -webkit-text-size-adjust: 100%;
+  }
+  /* 키보드 포커스만 링 표시 (스캐너 HID 입력은 포커스를 옮기지 않는다) */
+  :focus-visible {
+    outline: 3px solid var(--color-brand-500);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* 밀도 루트. 화면 최상위 요소에 하나만 붙인다. */
+  .density-shopfloor {
+    font-size: var(--text-sf-body);
+    line-height: var(--text-sf-body--line-height);
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+  }
+  .density-admin {
+    font-size: var(--text-ad-body);
+    line-height: var(--text-ad-body--line-height);
+  }
+}
