@@ -60,3 +60,21 @@ export function todayYymmdd(now = new Date()): string {
   if (!p) return ''
   return `${p.year!.slice(2)}${p.month}${p.day}`
 }
+
+/** 오늘 일자 YYYY-MM-DD (Asia/Seoul) — DateInput 기본값 */
+export function todayIso(now = new Date()): string {
+  const p = parts(now.toISOString())
+  if (!p) return ''
+  return `${p.year}-${p.month}-${p.day}`
+}
+
+/** 납기 지연 판정 (v_shipment_today 규칙): due_date < 오늘 AND 상태 ∉ 완료 계열 */
+export function isOverdue(dueDate: string, status: string, today = todayIso()): boolean {
+  return dueDate < today && !['SHIPPED', 'CLOSED', 'CANCELLED'].includes(status)
+}
+
+/** 금액 (단가) — 소수 2자리까지, 천 단위 구분 */
+export function formatMoney(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—'
+  return n.toLocaleString('ko-KR', { maximumFractionDigits: 2 })
+}

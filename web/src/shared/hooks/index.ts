@@ -21,3 +21,4 @@ export {
   resourceKey,
 } from './useResource'
 export type { MutationState, ListResource } from './useResource'
+export { useDebouncedValue } from './useDebouncedValue'

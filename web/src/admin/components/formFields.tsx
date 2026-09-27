@@ -1,12 +1,12 @@
 /** FormField 계열 추가 컨트롤 (screens-admin §2 #2·#3): Textarea · Checkbox · CheckboxGroup · Radio */
-import type { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from 'react'
+import type { InputHTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from 'react'
 import { FormField, type FieldProps } from '@/shared/ui/admin'
 import { cn } from '@/shared/ui'
 import { controlClass } from '@/shared/ui/admin'
 
 type Common = Pick<FieldProps, 'label' | 'required' | 'hint' | 'error'> & { wrapperClassName?: string | undefined }
 
-export type TextareaProps = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'required'> & Common & { mono?: boolean }
+export type TextareaProps = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'required'> & Common & { mono?: boolean; ref?: Ref<HTMLTextAreaElement> | undefined }
 export function Textarea({ label, required, hint, error, wrapperClassName, className, id, mono, ...rest }: TextareaProps) {
   return (
     <FormField label={label} required={required} hint={hint} error={error} id={id} className={wrapperClassName}>

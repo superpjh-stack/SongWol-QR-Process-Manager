@@ -201,6 +201,17 @@ function filenameFromDisposition(h: string | null): string | null {
 
 export type DownloadResult = { filename: string; size: number; type: string }
 
+/** JWT 헤더로 blob 을 받는다 (이미지 표시용 — AuthImage). 실패는 ApiError throw */
+export async function fetchBlob(path: string): Promise<Blob> {
+  const res = await doFetch(path, { method: 'GET', headers: { ...authHeaders() }, credentials: 'same-origin' })
+  if (!res.ok) {
+    const parsed = await parseBody(res)
+    if (res.status === 401) handleUnauthorized({})
+    throw toApiError(res.status, parsed, undefined, res.headers)
+  }
+  return res.blob()
+}
+
 /**
  * JWT 헤더로 blob 을 받아 브라우저 저장 대화상자를 띄운다 (fetch → blob → objectURL, screens-admin §0.3).
  * 파일명은 서버 `Content-Disposition` 우선, 없으면 `fallbackName`.

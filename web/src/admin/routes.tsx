@@ -19,6 +19,12 @@ import { UsersPage } from './pages/master/UsersPage'
 import { CodeSettingsPage } from './pages/master/CodeSettingsPage'
 import { ImportPage } from './pages/master/ImportPage'
 import { MigrationBatchesPage } from './pages/system/MigrationBatchesPage'
+import { LabelsPage } from './pages/master/LabelsPage'
+import { SalesOrdersPage } from './pages/so/SalesOrdersPage'
+import { SalesOrderFormPage } from './pages/so/SalesOrderFormPage'
+import { SalesOrderDetailPage } from './pages/so/SalesOrderDetailPage'
+import { WorkOrdersPage } from './pages/wo/WorkOrdersPage'
+import { WorkOrderDetailPage } from './pages/wo/WorkOrderDetailPage'
 
 const guard = (screen: ScreenKey, el: React.ReactNode) => <RequireRole screen={screen}>{el}</RequireRole>
 const later = (screen: ScreenKey, id: string, title: string, sprint: string) => guard(screen, <NotReady id={id} title={title} sprint={sprint} />)
@@ -30,9 +36,13 @@ export const adminRoute: RouteObject = {
   element: <AdminLayout />,
   children: [
     { index: true, element: later('dashboard', 'ADM-28', '대시보드', '[S4-2]') },
-    { path: 'so/*', element: later('so', 'ADM-12', '수주 목록', '[S1-7]') },
+    { path: 'so', element: guard('so', <SalesOrdersPage />) },
+    { path: 'so/new', element: guard('so', <SalesOrderFormPage />) },
+    { path: 'so/:code/edit', element: guard('so', <SalesOrderFormPage />) },
+    { path: 'so/:code', element: guard('so', <SalesOrderDetailPage />) },
+    { path: 'wo', element: guard('wo', <WorkOrdersPage />) },
     { path: 'wo/pending', element: later('wo.pending', 'ADM-17', '예외 승인 대기', '[S2-3]') },
-    { path: 'wo/*', element: later('wo', 'ADM-15', '작업지시 목록', '[S1]') },
+    { path: 'wo/:code', element: guard('wo', <WorkOrderDetailPage />) },
     { path: 'material/receipts', element: later('material', 'ADM-18', '입고 목록', '[S3-1]') },
     { path: 'material/stock', element: later('material', 'ADM-19', '재고 현황', '[S3-5]') },
     { path: 'material/stock/adjust', element: later('material.adjust', 'ADM-20', '재고 조정', '[S3-5]') },
@@ -54,7 +64,7 @@ export const adminRoute: RouteObject = {
     { path: 'master/routings/:id', element: guard('master.routings', <RoutingDetailPage />) },
     { path: 'master/stations', element: guard('master.stations', <StationsPage />) },
     { path: 'master/users', element: guard('master.users', <UsersPage />) },
-    { path: 'master/labels', element: later('master.labels', 'ADM-09', '라벨 양식 · 프린터', '[S1]') },
+    { path: 'master/labels', element: guard('master.labels', <LabelsPage />) },
     { path: 'master/codes', element: guard('master.codes', <CodeSettingsPage />) },
     { path: 'master/import', element: guard('master.import', <ImportPage />) },
     { path: 'system/notifications', element: later('system.notifications', 'ADM-29', '알림 이력', '[S4-8]') },

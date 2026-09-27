@@ -5,17 +5,26 @@
 import { cn } from './cn'
 import {
   ACTIVE_STATUS,
+  APPROVAL_STATUS,
+  DELAY_RISK,
+  LOT_STATUS,
   MIGRATION_SOURCE,
   MIGRATION_STATUS,
   RECEIPT_STATUS,
   ROLE_STATUS,
+  SCAN_RESULT,
+  SO_STATUS,
   STEP_STATUS,
   TONE_CLASS,
   WO_STATUS,
+  type ApprovalStatus,
+  type LotStatus,
   type MigrationSource,
   type MigrationStatus,
   type ReceiptStatus,
   type Role,
+  type ScanResult,
+  type SoStatus,
   type StatusMeta,
   type StepStatus,
   type WoStatus,
@@ -31,6 +40,11 @@ export type StatusBadgeProps = (
   | { kind: 'migration'; status: MigrationStatus }
   | { kind: 'source'; status: MigrationSource }
   | { kind: 'role'; status: Role }
+  | { kind: 'so'; status: SoStatus }
+  | { kind: 'scanResult'; status: ScanResult }
+  | { kind: 'approval'; status: ApprovalStatus }
+  | { kind: 'lot'; status: LotStatus }
+  | { kind: 'delay'; status: true }
 ) & {
   /** 기본 'admin' */
   density?: Density | undefined
@@ -55,6 +69,16 @@ function metaOf(p: StatusBadgeProps): StatusMeta {
       return MIGRATION_SOURCE[p.status]
     case 'role':
       return ROLE_STATUS[p.status]
+    case 'so':
+      return SO_STATUS[p.status]
+    case 'scanResult':
+      return SCAN_RESULT[p.status]
+    case 'approval':
+      return APPROVAL_STATUS[p.status]
+    case 'lot':
+      return LOT_STATUS[p.status]
+    case 'delay':
+      return DELAY_RISK
   }
 }
 

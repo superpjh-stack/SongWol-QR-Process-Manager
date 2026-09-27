@@ -29,7 +29,6 @@ import type {
   PrintMethod,
   PrintMethodCreate,
   PrintMethodUpdate,
-  Printer,
   Process,
   ProcessCreate,
   ProcessReorderRequest,
@@ -57,7 +56,7 @@ export type PagedResource = 'customers' | 'items' | 'equipment' | 'routings' | '
 export type ArrayResource = 'print-methods' | 'processes' | 'item-groups' | 'carriers' | 'printers'
 export type MasterResource = PagedResource | ArrayResource
 
-export const SORTABLE: Record<PagedResource | 'migration/batches', readonly string[]> = {
+export const SORTABLE: Record<PagedResource | 'migration/batches' | 'so' | 'wo', readonly string[]> = {
   customers: ['code', 'name', 'updated_at'],
   items: ['code', 'name', 'item_group', 'updated_at'],
   equipment: ['code', 'name'],
@@ -65,6 +64,8 @@ export const SORTABLE: Record<PagedResource | 'migration/batches', readonly stri
   stations: ['id', 'type', 'last_seen_at'],
   users: ['login_id', 'name', 'role'],
   'migration/batches': ['created_at'],
+  so: ['due_date', 'order_date', 'code', 'status', 'progress_pct', 'updated_at'],
+  wo: ['due_date', 'code', 'status', 'current_step_seq', 'issued_at'],
 }
 
 const P = API_PREFIX
@@ -73,7 +74,7 @@ const P = API_PREFIX
 export function crud<T, C, U>(res: MasterResource) {
   const base = `${P}/${res}`
   return {
-    list: (params?: QueryParams) => api.get<Page<T>>(`${base}${qs(params)}`),
+    list: (params?: QueryParams, signal?: AbortSignal) => api.get<Page<T>>(`${base}${qs(params)}`, signal ? { signal } : undefined),
     listAll: (params?: QueryParams) => api.get<T[]>(`${base}${qs(params)}`),
     get: (id: string | number) => api.get<T>(`${base}/${encodeURIComponent(String(id))}`),
     create: (body: C) => api.post<T>(base, body),
@@ -127,8 +128,6 @@ export const usersApi = {
   setPin: (id: number, pin: string) => api.post<void>(`${P}/users/${id}/set-pin`, { pin } satisfies SetPinRequest),
   setPassword: (id: number, password: string) => api.post<void>(`${P}/users/${id}/set-password`, { password } satisfies SetPasswordRequest),
 }
-
-export const printersApi = crud<Printer, never, never>('printers')
 
 export const codeSettingsApi = {
   get: () => api.get<CodeSettings>(`${P}/settings/codes`),

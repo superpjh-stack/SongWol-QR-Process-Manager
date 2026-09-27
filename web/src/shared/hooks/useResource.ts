@@ -13,7 +13,8 @@ import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/
 import { ApiError, api, API_PREFIX, crud, qs, type MasterResource, type QueryParams } from '../api'
 import type { HookState, Page } from '../types'
 
-export type ListResource = MasterResource | 'migration/batches'
+/** Page 응답 목록 경로. so·wo 는 api-contract §7.3 (S1) */
+export type ListResource = MasterResource | 'migration/batches' | 'so' | 'wo'
 
 function asApiError(e: unknown): ApiError | null {
   if (!e) return null

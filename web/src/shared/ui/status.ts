@@ -25,12 +25,13 @@ import {
   IconTruck,
   IconWarning,
   IconX,
+  IconKey,
 } from './icons'
 
 /** 상태 타입은 contracts/ts-types.md (shared/types) 의 것을 그대로 re-export 한다 (값 동일). */
-export type { WoStatus, StepStatus, ReceiptStatus, MigrationStatus, MigrationSource, Role } from '../types'
-import type { MigrationSource, MigrationStatus, ReceiptStatus, Role, StepStatus, WoStatus } from '../types'
-import { MigrationSourceLabel, MigrationStatusLabel, RoleLabel } from '../labels'
+export type { WoStatus, StepStatus, ReceiptStatus, MigrationStatus, MigrationSource, Role, SoStatus, ScanResult, ApprovalStatus, LotStatus } from '../types'
+import type { ApprovalStatus, LotStatus, MigrationSource, MigrationStatus, ReceiptStatus, Role, ScanResult, SoStatus, StepStatus, WoStatus } from '../types'
+import { ApprovalStatusLabel, LotStatusLabel, MigrationSourceLabel, MigrationStatusLabel, RoleLabel, ScanResultLabel, SoStatusLabel } from '../labels'
 
 /** 의미색 키. tokens.css 의 --color-status-<tone>-* 와 1:1 */
 export type StatusTone =
@@ -122,3 +123,37 @@ export const ROLE_STATUS: Record<Role, StatusMeta> = {
   WORKER: { label: RoleLabel.WORKER, tone: 'done', Icon: IconUser },
   VIEWER: { label: RoleLabel.VIEWER, tone: 'waiting', Icon: IconUser },
 }
+
+/** 수주 상태 (screens-admin §2 #1 `so`). 문구 shared/labels SoStatusLabel */
+export const SO_STATUS: Record<SoStatus, StatusMeta> = {
+  OPEN: { label: SoStatusLabel.OPEN, tone: 'waiting', Icon: IconInbox },
+  IN_PROGRESS: { label: SoStatusLabel.IN_PROGRESS, tone: 'progress', Icon: IconPlay },
+  PARTIAL_SHIPPED: { label: SoStatusLabel.PARTIAL_SHIPPED, tone: 'partial', Icon: IconHalf },
+  SHIPPED: { label: SoStatusLabel.SHIPPED, tone: 'done', Icon: IconTruck },
+  CLOSED: { label: SoStatusLabel.CLOSED, tone: 'done', Icon: IconLock },
+  CANCELLED: { label: SoStatusLabel.CANCELLED, tone: 'error', Icon: IconX },
+}
+export const SO_STATUS_VALUES = Object.keys(SO_STATUS) as SoStatus[]
+
+/** 스캔 결과 (api-contract §3.3) */
+export const SCAN_RESULT: Record<ScanResult, StatusMeta> = {
+  OK: { label: ScanResultLabel.OK, tone: 'done', Icon: IconCheck },
+  WARN: { label: ScanResultLabel.WARN, tone: 'warn', Icon: IconWarning },
+  REJECT: { label: ScanResultLabel.REJECT, tone: 'error', Icon: IconX },
+}
+
+/** 승인 상태 (scan_event.approval_status) */
+export const APPROVAL_STATUS: Record<ApprovalStatus, StatusMeta> = {
+  PENDING: { label: ApprovalStatusLabel.PENDING, tone: 'warn', Icon: IconKey },
+  APPROVED: { label: ApprovalStatusLabel.APPROVED, tone: 'done', Icon: IconCheck },
+  DENIED: { label: ApprovalStatusLabel.DENIED, tone: 'error', Icon: IconX },
+}
+
+/** 입고 LOT 상태 (spec A3-08) */
+export const LOT_STATUS: Record<LotStatus, StatusMeta> = {
+  OK: { label: LotStatusLabel.OK, tone: 'done', Icon: IconCheck },
+  QUARANTINE: { label: LotStatusLabel.QUARANTINE, tone: 'error', Icon: IconLock },
+}
+
+/** 지연 위험 (delay_risk) — 배지 하나로 표시 */
+export const DELAY_RISK: StatusMeta = { label: '지연 위험', tone: 'warn', Icon: IconWarning }

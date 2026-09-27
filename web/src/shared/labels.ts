@@ -3,14 +3,22 @@
  * 출처: spec §3 역할명 · spec §9 화면명 · screens-admin.md 각 절. spec 에 문구가 없는 것은 ※ 기본값(PM 확정 대상).
  */
 import type {
+  AllowedAction,
+  ApprovalStatus,
   EquipType,
   ImportEntity,
+  LabelType,
+  LotStatus,
   MigrationSource,
   MigrationStatus,
   PrintMethodCode,
   RequiredInput,
   Role,
+  ScanAction,
+  ScanResult,
+  SoStatus,
   StationType,
+  TargetType,
   VarianceReasonCode,
 } from './types'
 
@@ -93,3 +101,60 @@ export const VarianceReasonLabel: Record<VarianceReasonCode, string> = {
 }
 
 export const ActiveLabel = { true: '활성', false: '비활성' } as const
+
+/** ※ 기본값 — sales_order.status (db-schema §3.1, spec §2.3 에 없음 F10) */
+export const SoStatusLabel: Record<SoStatus, string> = {
+  OPEN: '접수',
+  IN_PROGRESS: '진행 중',
+  PARTIAL_SHIPPED: '부분 발송',
+  SHIPPED: '발송 완료',
+  CLOSED: '종결',
+  CANCELLED: '취소',
+}
+
+/** spec §6 라벨 4종 (screens-admin ADM-09) */
+export const LabelTypeLabel: Record<LabelType, string> = {
+  WORK_ORDER_PDF: '작업지시서 (A4)',
+  WO_LABEL: 'WO 라벨 (4인치)',
+  BOX_LABEL: '박스 라벨',
+  WORKER_CARD: '작업자 카드',
+}
+
+/** screens-admin ADM-09 「PRODUCTION(인쇄 구역, QR 오류정정 Q) / PACKING」 */
+export const PrinterPurposeLabel: Record<'PRODUCTION' | 'PACKING', string> = {
+  PRODUCTION: '인쇄 구역 (오류정정 Q)',
+  PACKING: '포장',
+}
+
+/** spec §4.3 액션. ※ 문구는 기본값 */
+export const ScanActionLabel: Record<ScanAction, string> = {
+  START: '착수',
+  DONE: '완료',
+  RECEIVE: '입고',
+  PACK: '포장',
+  SHIP: '발송',
+  LOGIN: '로그인',
+  CANCEL: '취소',
+  REPRINT: '재출력',
+  APPROVE: '승인',
+  MAP: '바코드 매핑',
+}
+
+/** api-contract §3.3 */
+export const ScanResultLabel: Record<ScanResult, string> = { OK: '정상', WARN: '주의', REJECT: '거부' }
+export const ApprovalStatusLabel: Record<ApprovalStatus, string> = { PENDING: '승인 대기', APPROVED: '승인', DENIED: '거부' }
+export const LotStatusLabel: Record<LotStatus, string> = { OK: '정상', QUARANTINE: '격리' }
+
+/** spec §2.1 코드 접두사 */
+export const TargetTypeLabel: Record<TargetType, string> = { SO: '수주', WO: '작업지시', LT: 'LOT', US: '작업자 카드', VB: '협력업체 바코드' }
+
+/** api-contract §13.4 admin #31 (QRL-01). ※ 문구는 기본값 */
+export const AllowedActionLabel: Record<AllowedAction, string> = {
+  VIEW_DETAIL: '관리자 웹에서 열기',
+  REPRINT: '라벨 재출력',
+  HOLD: '보류',
+  SPLIT: '분할',
+  APPROVE_PENDING: '예외 승인',
+  QUARANTINE: '격리',
+  SHIP: '발송',
+}
