@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { buildPackScanRequest, computeDefaultQtyBox, p30NotDoneStatus, packRemainingQty, readRememberedPackQtyBox, rememberPackQtyBox } from './packLogic'
-import type { RouteStep, WorkOrderDetail } from '../shared/types'
+import {
+  buildPackScanRequest,
+  computeDefaultQtyBox,
+  p30NotDoneStatus,
+  packConfirmationsFromFlush,
+  packRemainingQty,
+  readRememberedPackQtyBox,
+  rememberPackQtyBox,
+  type PackFlushEntry,
+} from './packLogic'
+import type { RouteStep, ScanResponse, WorkOrderDetail } from '../shared/types'
 
 function step(overrides: Partial<RouteStep>): RouteStep {
   return {
@@ -141,5 +150,87 @@ describe('buildPackScanRequest', () => {
     expect(req.equipment_code).toBeUndefined()
     expect(req.qty_good).toBeUndefined()
     expect(req.extra).toBeUndefined()
+  })
+})
+
+describe('packConfirmationsFromFlush (오프라인 포장 flush → 라벨 부착 확인 목록, §13.7 ⑬)', () => {
+  function packResponse(overrides: Partial<ScanResponse> = {}): ScanResponse {
+    return {
+      result: 'OK',
+      message: '포장 완료했습니다',
+      wo: null,
+      next_process: null,
+      remaining_qty: 220,
+      requires_approval: false,
+      approval_token: null,
+      warnings: [],
+      step: null,
+      event_uuid: 'e1',
+      duplicate: false,
+      box: { kind: 'PACK', id: 1, code: 'LT-261001-0007', wo_code: 'WO-261001-0012', box_no: 3, qty: 60, packed_at: '2026-10-01T09:00:00+09:00', shipment_id: null },
+      label_job: { issue_no: 1, label_type: 'BOX_LABEL', printer_id: 'LP-PACK-1', copies: 1, sent_at: '2026-10-01T09:00:01+09:00', pdf_url: null, zpl_sent: true, error: null },
+      ...overrides,
+    }
+  }
+
+  function entry(overrides: Partial<PackFlushEntry> = {}): PackFlushEntry {
+    return { event_uuid: 'e1', client_seq: 5, response: packResponse(), at: '2026-10-01T09:05:00+09:00', ...overrides }
+  }
+
+  it('box 가 있는 응답을 확인 목록 행으로 바꾼다 — n 은 client_seq, 라벨에 인쇄되는 값과 같다', () => {
+    const rows = packConfirmationsFromFlush([entry()])
+    expect(rows).toEqual([
+      {
+        id: 'e1',
+        n: 5,
+        woCode: 'WO-261001-0012',
+        boxCode: 'LT-261001-0007',
+        boxNo: 3,
+        qty: 60,
+        labelJob: packResponse().label_job,
+        at: '2026-10-01T09:05:00+09:00',
+      },
+    ])
+  })
+
+  it('box 가 없는 응답(다른 액션·박스 미생성 REJECT)은 제외한다', () => {
+    const noBoxResponse: ScanResponse = {
+      result: 'REJECT',
+      message: '유효하지 않은 코드',
+      wo: null,
+      next_process: null,
+      remaining_qty: null,
+      requires_approval: false,
+      approval_token: null,
+      warnings: [],
+      step: null,
+      event_uuid: 'e2',
+      duplicate: false,
+    }
+    const rows = packConfirmationsFromFlush([entry({ event_uuid: 'e2', response: noBoxResponse })])
+    expect(rows).toEqual([])
+  })
+
+  it('라벨 출력 실패(zpl_sent=false) 여도 박스는 목록에 남는다 — [재출력] 은 화면이 붙인다', () => {
+    const rows = packConfirmationsFromFlush([
+      entry({ response: packResponse({ result: 'WARN', label_job: { issue_no: 1, label_type: 'BOX_LABEL', printer_id: null, copies: 1, sent_at: null, pdf_url: null, zpl_sent: false, error: 'PRINTER_UNREACHABLE' } }) }),
+    ])
+    expect(rows[0]?.labelJob?.zpl_sent).toBe(false)
+    expect(rows[0]?.labelJob?.error).toBe('PRINTER_UNREACHABLE')
+  })
+
+  it('duplicate=true 여도 거르지 않는다 — 이전 시도가 타임아웃돼 한 번도 못 본 확인일 수 있다(조용한 실패 금지)', () => {
+    const rows = packConfirmationsFromFlush([entry({ response: packResponse({ duplicate: true }) })])
+    expect(rows).toHaveLength(1)
+  })
+
+  it('여러 건을 #n(client_seq) 오름차순으로 정렬한다 — 서버 flush 응답 순서와 무관하게', () => {
+    const rows = packConfirmationsFromFlush([
+      entry({ event_uuid: 'c', client_seq: 9, response: packResponse({ event_uuid: 'c', box: { kind: 'PACK', id: 3, code: 'LT-3', wo_code: 'WO-1', box_no: 3, qty: 10, packed_at: 'x', shipment_id: null } }) }),
+      entry({ event_uuid: 'a', client_seq: 3, response: packResponse({ event_uuid: 'a', box: { kind: 'PACK', id: 1, code: 'LT-1', wo_code: 'WO-1', box_no: 1, qty: 10, packed_at: 'x', shipment_id: null } }) }),
+      entry({ event_uuid: 'b', client_seq: 6, response: packResponse({ event_uuid: 'b', box: { kind: 'PACK', id: 2, code: 'LT-2', wo_code: 'WO-1', box_no: 2, qty: 10, packed_at: 'x', shipment_id: null } }) }),
+    ])
+    expect(rows.map((r) => r.n)).toEqual([3, 6, 9])
+    expect(rows.map((r) => r.boxCode)).toEqual(['LT-1', 'LT-2', 'LT-3'])
   })
 })

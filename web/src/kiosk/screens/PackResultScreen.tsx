@@ -14,7 +14,7 @@ import { autoDismissMsFor } from '../kioskLogic'
 import type { LabelJob, ScanResponse } from '@/shared/types'
 
 export type PackResultScreenProps =
-  | { kind: 'saved'; code: string; pendingCount: number; onDismiss: () => void }
+  | { kind: 'saved'; code: string; pendingCount: number; clientSeq?: number | undefined; onDismiss: () => void }
   | {
       kind: 'response'
       code: string
@@ -33,9 +33,18 @@ export function PackResultScreen(props: PackResultScreenProps) {
           wo={{ code: props.code, customerName: '—', itemName: '—', qty: 0, printMethod: '—' }}
           variant="saved"
           message={`저장됨 (미전송) — 박스 번호·라벨은 연결 후 · 미전송 ${props.pendingCount}건`}
-          autoDismissMs={autoDismissMsFor('saved')}
+          // #n 이 있는 동안(오프라인 포장)은 확인을 눌러야 다음으로 넘어간다 — 박스에 적어야 할 번호를
+          // 놓치지 않도록 자동으로 사라지지 않는다(§13.7 ⑬, 조용한 실패 금지)
+          autoDismissMs={typeof props.clientSeq === 'number' ? undefined : autoDismissMsFor('saved')}
           onDismiss={props.onDismiss}
         >
+          {typeof props.clientSeq === 'number' ? (
+            <div className="w-full rounded-sf border-2 border-status-warn-line bg-status-warn-bg px-4 py-4 text-center">
+              <p className="text-sf-body font-bold text-status-warn-fg">이 박스에 아래 임시 번호를 크게 적으세요</p>
+              <p className="text-sf-num font-bold tabular-nums text-status-warn-fg">#{props.clientSeq}</p>
+              <p className="text-sf-body text-status-warn-fg">연결되면 라벨이 자동 출력됩니다 — 이 번호로 대조하세요</p>
+            </div>
+          ) : null}
           <BigButton fullWidth onClick={props.onDismiss}>
             확인
           </BigButton>

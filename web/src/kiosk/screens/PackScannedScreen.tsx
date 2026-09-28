@@ -80,7 +80,12 @@ export function PackScannedScreen({ code, wo, loading, errorMessage, offlineNoDe
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4">
       {offlineNoDetail ? <WarnBanner kind="offline" message="오프라인 캐시로 표시 중입니다" /> : null}
-      {p30Status ? <WarnBanner kind="warning" message="직전 공정(인쇄) 미완료 — 포장 시 반장 승인이 필요합니다" /> : null}
+      {p30Status ? (
+        <WarnBanner
+          kind="warning"
+          message="직전 공정(인쇄) 미완료 — 승인 절차 없이, 인쇄를 통과한 양품 수량까지만 포장할 수 있습니다"
+        />
+      ) : null}
       {offline ? (
         <WarnBanner kind="offline" message="오프라인: 박스 라벨은 연결 후 자동 출력됩니다. 박스에 순번을 수기로 적으세요" />
       ) : null}

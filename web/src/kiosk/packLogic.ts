@@ -4,7 +4,8 @@
  * === 'P50'` 일 때 이 함수들을 부수효과에 연결한다.
  */
 import { nowKstIso } from '../shared/scanUtil'
-import type { InputVia, ScanRequest, StepStatus, WorkOrderDetail } from '../shared/types'
+import type { PackLabelConfirmation } from '../shared/offline'
+import type { InputVia, ScanRequest, ScanResponse, StepStatus, WorkOrderDetail } from '../shared/types'
 
 /** KSK-80 「양품 − 포장 누계」— 음수로 내려가지 않는다 (spec §1 KSK-80 「남은 수량」) */
 export function packRemainingQty(wo: Pick<WorkOrderDetail, 'qty_good' | 'qty_packed'>): number {
@@ -78,4 +79,36 @@ export function buildPackScanRequest(input: BuildPackRequestInput): ScanRequest 
     client_seq: input.clientSeq,
     input_via: input.inputVia,
   }
+}
+
+/**
+ * 오프라인 포장 flush 결과 1건 — `useOfflineQueue.FlushedEntry` 와 같은 모양이지만 `client_seq` 를 필수로
+ * 요구해 이 파일이 `shared/offline` 타입에 의존하지 않고도(순수 함수 유지) 테스트하기 쉽게 한다.
+ */
+export type PackFlushEntry = { event_uuid: string; client_seq: number; response: ScanResponse; at: string }
+
+/**
+ * flush 응답에서 PACK 으로 실제 박스가 커밋된 건만 뽑아 라벨 부착 확인 목록 행으로 변환한다(§13.7 ⑬).
+ * `response.box` 가 없는 건(다른 액션, 또는 박스가 생성되지 않은 REJECT)은 제외한다. `duplicate` 는
+ * 일부러 걸러내지 않는다 — 같은 event_uuid 가 이전 시도에서 타임아웃돼 박스 확인을 한 번도 못 받았을 수
+ * 있어(서버는 이미 커밋했지만 클라이언트는 몰랐던 경우), 조용히 버리는 쪽보다 한 번 더 보여주는 쪽이
+ * 안전하다(조용한 실패 금지). 표시 순서는 #n(client_seq) 오름차순 — §13.7 "출력 순서 = #n 순".
+ */
+export function packConfirmationsFromFlush(entries: PackFlushEntry[]): PackLabelConfirmation[] {
+  const rows: PackLabelConfirmation[] = []
+  for (const { event_uuid, client_seq, response, at } of entries) {
+    const box = response.box
+    if (!box) continue
+    rows.push({
+      id: event_uuid,
+      n: client_seq,
+      woCode: box.wo_code,
+      boxCode: box.code,
+      boxNo: box.box_no,
+      qty: box.qty,
+      labelJob: response.label_job ?? null,
+      at,
+    })
+  }
+  return rows.sort((a, b) => a.n - b.n)
 }

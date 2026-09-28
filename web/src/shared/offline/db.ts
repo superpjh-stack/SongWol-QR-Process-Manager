@@ -4,16 +4,24 @@
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import type { PendingScanRecord } from '../types'
+import type { PackLabelConfirmation } from './packConfirmations'
 
 const DB_NAME = 'sw-offline-queue'
-const DB_VERSION = 1
+const DB_VERSION = 2
 export const STORE = 'pending_scans'
+/** 오프라인 포장 라벨 부착 확인 목록 (§13.7 ⑬) — [부착 완료] 전까지 보존한다(0007 새 스토어) */
+export const CONFIRM_STORE = 'pack_confirmations'
 
 interface OfflineDB extends DBSchema {
   pending_scans: {
     key: string
     value: PendingScanRecord
     indexes: { client_seq: number }
+  }
+  pack_confirmations: {
+    key: string
+    value: PackLabelConfirmation
+    indexes: { n: number }
   }
 }
 
@@ -26,6 +34,10 @@ export function getDb(): Promise<IDBPDatabase<OfflineDB>> {
         if (!db.objectStoreNames.contains(STORE)) {
           const store = db.createObjectStore(STORE, { keyPath: 'event_uuid' })
           store.createIndex('client_seq', 'client_seq')
+        }
+        if (!db.objectStoreNames.contains(CONFIRM_STORE)) {
+          const store = db.createObjectStore(CONFIRM_STORE, { keyPath: 'id' })
+          store.createIndex('n', 'n')
         }
       },
     })

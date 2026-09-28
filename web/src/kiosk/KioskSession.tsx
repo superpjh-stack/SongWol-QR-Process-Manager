@@ -7,8 +7,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { stationApi } from '@/shared/api'
 import { isApiError } from '@/shared/api/client'
 import { parseScanCode, useIdleLogout, useScannerInput, useWakeLock } from '@/shared/hooks'
-import { nextClientSeq, submitScan, useOfflineQueue, type FlushedEntry } from '@/shared/offline'
+import { nextClientSeq, recordPackConfirmations, submitScan, useOfflineQueue, usePackLabelConfirmations, type FlushedEntry } from '@/shared/offline'
 import { IdleScreen, QueueList, WarnBannerList, type EquipmentOption, type QueueItem as UiQueueItem, type ScanResultVariant, type WarnBannerEntry } from '@/shared/ui/shopfloor'
+import { IconTag } from '@/shared/ui/icons'
 import { DeviceChrome } from '@/shared/device/DeviceChrome'
 import { CameraScanDialog } from '@/shared/device/CameraScanDialog'
 import { LoginScreen } from '@/shared/device/LoginScreen'
@@ -17,7 +18,7 @@ import { PendingApprovalsScreen } from '@/shared/device/PendingApprovalsScreen'
 import { PendingQueueScreen } from '@/shared/device/PendingQueueScreen'
 import type { Equipment, InputVia, LoginVia, ParsedCode, PendingScan, QueueItem, QueueResponse, ScanResponse, Station, UserSummary, VarianceReasonCode, WorkOrderDetail } from '@/shared/types'
 import { buildDoneScanRequest, defaultGoodQty, isToleranceExceeded, newEventUuid, nowKstIso, scanResultVariant } from './kioskLogic'
-import { buildPackScanRequest, computeDefaultQtyBox, packRemainingQty, readRememberedPackQtyBox, rememberPackQtyBox } from './packLogic'
+import { buildPackScanRequest, computeDefaultQtyBox, packConfirmationsFromFlush, packRemainingQty, readRememberedPackQtyBox, rememberPackQtyBox } from './packLogic'
 import { ScannedScreen } from './screens/ScannedScreen'
 import { QtyScreen } from './screens/QtyScreen'
 import { ReasonScreen } from './screens/ReasonScreen'
@@ -25,11 +26,27 @@ import { ConfirmScreen } from './screens/ConfirmScreen'
 import { ResultScreen } from './screens/ResultScreen'
 import { PackScannedScreen } from './screens/PackScannedScreen'
 import { PackResultScreen } from './screens/PackResultScreen'
+import { PackLabelConfirmScreen } from './screens/PackLabelConfirmScreen'
 
-type Phase = 'IDLE' | 'SCANNED' | 'QTY' | 'REASON' | 'CONFIRM' | 'RESULT' | 'APPROVAL' | 'PENDING_APPROVALS' | 'PENDING_QUEUE' | 'PACK_SCANNED' | 'PACK_RESULT'
+type Phase =
+  | 'IDLE'
+  | 'SCANNED'
+  | 'QTY'
+  | 'REASON'
+  | 'CONFIRM'
+  | 'RESULT'
+  | 'APPROVAL'
+  | 'PENDING_APPROVALS'
+  | 'PENDING_QUEUE'
+  | 'PACK_SCANNED'
+  | 'PACK_RESULT'
+  | 'PACK_LABEL_CONFIRM'
 
 type ScannedCode = { code: string; check: string | null; inputVia: InputVia }
-type ResultData = { kind: 'response'; variant: ScanResultVariant; response: ScanResponse } | { kind: 'saved'; pendingCount: number }
+type ResultData =
+  | { kind: 'response'; variant: ScanResultVariant; response: ScanResponse }
+  // clientSeq 는 P50 오프라인 저장일 때만 채운다 — §13.7 ⑬ "#n"(박스에 수기로 적는 임시 번호)
+  | { kind: 'saved'; pendingCount: number; clientSeq?: number }
 type ApprovalCtx = { eventUuid: string; approvalToken: string | null; message: string }
 
 function equipmentOptionsOf(list: Equipment[]): EquipmentOption[] {
@@ -139,6 +156,11 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
     }
   }, [bootOffline, pushBanner])
 
+  // P50 전용 — 오프라인 포장 flush 로 커밋된 박스의 라벨 부착 확인 목록(§13.7 ⑬, DEF-QA2-S3-005)
+  const packConfirm = usePackLabelConfirmations()
+  const packConfirmRefreshRef = useRef<() => void>(() => {})
+  packConfirmRefreshRef.current = packConfirm.refresh
+
   // refreshQueue 는 아래에서 선언되지만, handleFlushed 는 flush 가 실제로 끝난 뒤(다음 렌더 이후)에만
   // 호출되므로 선언 순서는 안전하다 — 상호 참조를 피하려고 ref 로 최신 함수만 담아 둔다.
   const refreshQueueRef = useRef<() => void>(() => {})
@@ -153,6 +175,13 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
         }
       }
       if (entries.some((e) => e.response.requires_approval)) refreshQueueRef.current()
+
+      // PACK 으로 실제 박스가 커밋된 건은(WARN 이라도, 예: 라벨 실패) 위 배너와 별개로 라벨 부착 확인
+      // 목록에 쌓는다 — IndexedDB 에 저장해 [부착 완료] 전까지 새로고침에도 남는다(§13.7 ⑬)
+      const packRows = packConfirmationsFromFlush(entries.map((e) => ({ event_uuid: e.event_uuid, client_seq: e.client_seq, response: e.response, at: e.at })))
+      if (packRows.length > 0) {
+        void recordPackConfirmations(packRows).then(() => packConfirmRefreshRef.current())
+      }
     },
     [pushBanner],
   )
@@ -338,6 +367,10 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
   async function doPackSubmit(qtyBoxValue: number) {
     if (!wo || !worker || !scanned) return
     setPhase('CONFIRM')
+    // 오프라인으로 저장되면 이 값이 그대로 §13.7 ⑬ "#n" — 작업자가 박스에 적을 임시 번호이자,
+    // flush 시 서버가 라벨에 "임시 #n" 으로 인쇄하는 값(offline_seq)과 같다. 미리 뽑아 두는 이유는
+    // buildPackScanRequest 가 소비해 버리기 전에 결과 화면에도 같은 값을 보여줘야 하기 때문
+    const clientSeq = nextClientSeq()
     const req = buildPackScanRequest({
       stationId: station.id,
       workerCard: worker.card_code ?? '',
@@ -346,7 +379,7 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
       qtyBox: qtyBoxValue,
       inputVia: scanned.inputVia,
       eventUuid: newEventUuid(),
-      clientSeq: nextClientSeq(),
+      clientSeq,
       scannedAt: nowKstIso(),
     })
     const outcome = await submitScan(req)
@@ -367,7 +400,7 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
       pushBanner({ kind: 'error', message: `요청 형식 오류: ${outcome.error.message}`, woCode: wo.code, at: nowKstIso() })
       setPhase('PACK_SCANNED')
     } else {
-      setResultData({ kind: 'saved', pendingCount: offlineQueue.pendingCount + 1 })
+      setResultData({ kind: 'saved', pendingCount: offlineQueue.pendingCount + 1, clientSeq })
       setPhase('PACK_RESULT')
     }
   }
@@ -469,6 +502,15 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
                   승인 대기 {queueData?.pending_approvals}
                 </button>
               ) : null}
+              {isP50 && packConfirm.count > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setPhase('PACK_LABEL_CONFIRM')}
+                  className="inline-flex min-h-touch-min items-center gap-2 rounded-full border-2 border-status-warn-line bg-status-warn-bg px-4 text-sf-body font-bold text-status-warn-fg"
+                >
+                  <IconTag size={20} /> 라벨 부착 확인 {packConfirm.count}
+                </button>
+              ) : null}
               <button type="button" onClick={() => setCameraOpen(true)} className="min-h-touch-min rounded-sf border-2 border-line-strong bg-surface px-4 text-sf-body font-bold">
                 카메라 스캔 / 직접 입력
               </button>
@@ -508,6 +550,8 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
       staleCount={offlineQueue.staleCount}
       pendingApprovals={queueData?.pending_approvals ?? 0}
       onOpenPendingApprovals={() => setPhase('PENDING_APPROVALS')}
+      packLabelConfirmCount={isP50 ? packConfirm.count : 0}
+      onOpenPackLabelConfirm={() => setPhase('PACK_LABEL_CONFIRM')}
       banners={banners}
       onDismissBanner={dismissBanner}
     >
@@ -590,7 +634,13 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
 
       {phase === 'PACK_RESULT' && resultData ? (
         resultData.kind === 'saved' ? (
-          <PackResultScreen kind="saved" code={scanned?.code ?? wo?.code ?? '—'} pendingCount={resultData.pendingCount} onDismiss={onPackNextBox} />
+          <PackResultScreen
+            kind="saved"
+            code={scanned?.code ?? wo?.code ?? '—'}
+            pendingCount={resultData.pendingCount}
+            clientSeq={resultData.clientSeq}
+            onDismiss={onPackNextBox}
+          />
         ) : (
           <PackResultScreen
             kind="response"
@@ -625,6 +675,19 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
           staleCount={offlineQueue.staleCount}
           lastFlushAt={offlineQueue.lastFlushAt}
           onFlushNow={offlineQueue.flushNow}
+          onClose={() => setPhase('IDLE')}
+        />
+      ) : null}
+
+      {phase === 'PACK_LABEL_CONFIRM' ? (
+        <PackLabelConfirmScreen
+          items={packConfirm.items}
+          printerId={station.printer_id}
+          onLabelUpdated={(id, labelJob) => void packConfirm.updateLabel(id, labelJob)}
+          onAckAll={() => {
+            void packConfirm.ackAll()
+            setPhase('IDLE')
+          }}
           onClose={() => setPhase('IDLE')}
         />
       ) : null}

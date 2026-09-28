@@ -17,3 +17,7 @@ export {
 export type { SubmitOutcome, SubmitBatchOutcome, FlushResult } from './offlineQueue'
 export { useOfflineQueue } from './useOfflineQueue'
 export type { UseOfflineQueueResult, OfflineConnStatus, FlushedEntry } from './useOfflineQueue'
+export { recordPackConfirmations, listPackConfirmations, updatePackConfirmationLabel, ackPackConfirmations } from './packConfirmations'
+export type { PackLabelConfirmation } from './packConfirmations'
+export { usePackLabelConfirmations } from './usePackLabelConfirmations'
+export type { UsePackLabelConfirmationsResult } from './usePackLabelConfirmations'

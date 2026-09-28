@@ -10,7 +10,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { ConnectionIndicator, WarnBannerList, type ConnectionStatus, type WarnBannerEntry } from '@/shared/ui/shopfloor'
-import { IconKey } from '@/shared/ui/icons'
+import { IconKey, IconTag } from '@/shared/ui/icons'
 
 function useClock(): string {
   const [now, setNow] = useState(() => new Date())
@@ -31,6 +31,9 @@ export type DeviceChromeProps = {
   staleCount: number
   pendingApprovals: number
   onOpenPendingApprovals: () => void
+  /** P50 전용 — 오프라인 포장 flush 로 커밋된 박스 중 [부착 완료] 전인 건수 (§13.7 ⑬). 0/생략이면 숨김 */
+  packLabelConfirmCount?: number
+  onOpenPackLabelConfirm?: () => void
   banners: WarnBannerEntry[]
   onDismissBanner: (id: string) => void
   children: ReactNode
@@ -46,6 +49,8 @@ export function DeviceChrome({
   staleCount,
   pendingApprovals,
   onOpenPendingApprovals,
+  packLabelConfirmCount = 0,
+  onOpenPackLabelConfirm,
   banners,
   onDismissBanner,
   children,
@@ -68,6 +73,15 @@ export function DeviceChrome({
               className="inline-flex h-touch-min items-center gap-2 rounded-full border-2 border-status-warn-line bg-status-warn-bg px-4 text-sf-body font-bold text-status-warn-fg"
             >
               <IconKey size={20} /> 승인 대기 {pendingApprovals}
+            </button>
+          ) : null}
+          {packLabelConfirmCount > 0 && onOpenPackLabelConfirm ? (
+            <button
+              type="button"
+              onClick={onOpenPackLabelConfirm}
+              className="inline-flex h-touch-min items-center gap-2 rounded-full border-2 border-status-warn-line bg-status-warn-bg px-4 text-sf-body font-bold text-status-warn-fg"
+            >
+              <IconTag size={20} /> 라벨 부착 확인 {packLabelConfirmCount}
             </button>
           ) : null}
           <button type="button" onClick={onLogout} className="min-h-touch-min rounded-sf border-2 border-line-strong bg-surface px-4 text-sf-lg font-bold">

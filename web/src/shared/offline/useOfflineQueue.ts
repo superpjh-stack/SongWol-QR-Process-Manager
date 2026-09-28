@@ -9,7 +9,7 @@ import { flushQueue, isStale, listAll, subscribe } from './offlineQueue'
 
 export type OfflineConnStatus = 'online' | 'offline' | 'syncing'
 
-export type FlushedEntry = { event_uuid: string; response: ScanResponse; at: string }
+export type FlushedEntry = { event_uuid: string; response: ScanResponse; client_seq: number; at: string }
 
 export type UseOfflineQueueResult = {
   status: OfflineConnStatus

@@ -38,6 +38,34 @@ function okResponse(eventUuid: string): ScanResponse {
   }
 }
 
+describe('nextClientSeq (§13.7 ⑬ 오프라인 포장 #n — 단말 전역 단조 증가, localStorage 보존)', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('1부터 시작해 호출할 때마다 1씩 늘어난다', async () => {
+    const { nextClientSeq } = await import('./offlineQueue')
+    expect(nextClientSeq()).toBe(1)
+    expect(nextClientSeq()).toBe(2)
+    expect(nextClientSeq()).toBe(3)
+  })
+
+  it('localStorage 에 보존돼 "재부팅"(새 모듈 인스턴스) 후에도 이어진다', async () => {
+    vi.resetModules()
+    const mod1 = await import('./offlineQueue')
+    mod1.nextClientSeq()
+    mod1.nextClientSeq()
+    vi.resetModules()
+    const mod2 = await import('./offlineQueue')
+    expect(mod2.nextClientSeq()).toBe(3)
+  })
+
+  it('오프라인 포장 화면에 보여줄 #n 은 이 값 그대로다 — 결과 화면·flush 후 확인 목록·인쇄된 라벨이 전부 같은 수를 써야 하므로 WO 별로 리셋하지 않는다', async () => {
+    const { nextClientSeq } = await import('./offlineQueue')
+    const n1 = nextClientSeq() // WO-A 박스 1
+    const n2 = nextClientSeq() // WO-B 박스 1 (다른 WO 지만 같은 단말 — 값은 계속 증가)
+    expect(n2).toBe(n1 + 1)
+  })
+})
+
 describe('offlineQueue — write-then-send 순서', () => {
   beforeEach(async () => {
     vi.resetModules()
@@ -124,8 +152,32 @@ describe('offlineQueue — write-then-send 순서', () => {
     const result = await flushQueue()
     expect(batchSpy).toHaveBeenCalledTimes(1)
     expect(result?.removed).toBe(1)
+    expect(result?.responses).toEqual([{ event_uuid: r2.event_uuid, response: okResponse(r2.event_uuid), client_seq: 2 }])
     const remaining = await listAll()
     expect(remaining.map((r) => r.event_uuid)).toEqual([r1.event_uuid]) // r2 만 제거됨
+  })
+
+  it('flush 결과는 원본 큐 레코드의 client_seq 를 같이 실어보낸다(§13.7 ⑬ 확인 목록의 #n 소스)', async () => {
+    const { enqueue, flushQueue } = await import('./offlineQueue')
+    const scan = await import('../api/scan')
+
+    const req: ScanRequest = {
+      event_uuid: 'cccccccc-0000-0000-0000-000000000001',
+      scanned_at: '2026-10-01T09:00:00+09:00',
+      station_id: 'K-P50-1',
+      worker_card: 'US-0007',
+      code: 'WO-261001-0012',
+      check: '7K3F',
+      action: 'PACK',
+      qty_box: 60,
+      client_seq: 42,
+    }
+    await enqueue(req)
+    vi.spyOn(scan.scanApi, 'batch').mockResolvedValue({ results: [{ event_uuid: req.event_uuid, response: { ...okResponse(req.event_uuid), box: { kind: 'PACK', id: 1, code: 'LT-1', wo_code: 'WO-1', box_no: 1, qty: 60, packed_at: 'x', shipment_id: null } } }] })
+
+    const result = await flushQueue()
+    expect(result?.responses[0]?.client_seq).toBe(42)
+    expect(result?.responses[0]?.response.box?.code).toBe('LT-1')
   })
 
   it('attempts >= 5 인 건은 flush 대상에서 제외하지만 큐에서 지우지 않는다', async () => {

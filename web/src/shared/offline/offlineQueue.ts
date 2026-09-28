@@ -162,7 +162,11 @@ export async function submitBatch(events: ScanRequest[]): Promise<SubmitBatchOut
   }
 }
 
-export type FlushResult = { attempted: number; removed: number; responses: Array<{ event_uuid: string; response: ScanResponse }> }
+export type FlushResult = {
+  attempted: number
+  removed: number
+  responses: Array<{ event_uuid: string; response: ScanResponse; client_seq: number }>
+}
 
 let flushing = false
 
@@ -177,7 +181,7 @@ export async function flushQueue(): Promise<FlushResult | null> {
   try {
     const all = await listAll()
     const active = all.filter((r) => r.attempts < MAX_ATTEMPTS)
-    const responses: Array<{ event_uuid: string; response: ScanResponse }> = []
+    const responses: Array<{ event_uuid: string; response: ScanResponse; client_seq: number }> = []
     let removed = 0
 
     for (let i = 0; i < active.length; i += BATCH_MAX) {
@@ -194,7 +198,10 @@ export async function flushQueue(): Promise<FlushResult | null> {
         if (item.event_uuid) {
           await remove(item.event_uuid)
           removed++
-          responses.push({ event_uuid: item.event_uuid, response: item.response })
+          // 원본 큐 레코드에서 client_seq 를 같이 실어보낸다 — 응답 자체엔 없지만 오프라인 포장 확인 목록의
+          // #n 이 바로 이 값이다(§13.7 ⑬, `apply_pack` 이 라벨에 인쇄하는 offline_seq 와 같은 값).
+          const original = chunk.find((r) => r.event_uuid === item.event_uuid)
+          responses.push({ event_uuid: item.event_uuid, response: item.response, client_seq: original?.client_seq ?? 0 })
         }
         // event_uuid 없는 건(형식 오류 자체가 uuid 를 못 실은 극단 케이스, §13.5 ⑦) — 원본을 찾을 수 없어 그대로 둔다
       }
