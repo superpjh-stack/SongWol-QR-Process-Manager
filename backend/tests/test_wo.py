@@ -363,6 +363,13 @@ def test_recalc_wo_and_so_pure() -> None:
     steps[1].qty_good, steps[1].qty_bad = 400, 5
     recalc.recalc_wo(wo, steps)
     assert wo.status == "IN_PROGRESS" and wo.current_step_seq == 2 and wo.qty_good == 400
+    # DEF-QA1-S4-004(회귀 방지): S4 E6 cancel_wo_event 가 replay_steps 로 P30 을 DONE/PARTIAL →
+    # WAITING 으로 되돌릴 수 있다 — 이때 qty_good/qty_bad 캐시가 예전 값(400/5)에 머물러 있으면
+    # 안 된다(대시보드·실적집계 오염). recalc_wo 는 P30 이 DONE 계열이 아니면 0 으로 되돌려야 한다.
+    steps[1].status = "WAITING"
+    steps[1].qty_good, steps[1].qty_bad = None, None
+    recalc.recalc_wo(wo, steps)
+    assert wo.qty_good == 0 and wo.qty_bad == 0
     steps[1].status = "DONE"
     steps[2].status = "DONE"
     recalc.recalc_wo(wo, steps)

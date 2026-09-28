@@ -55,9 +55,16 @@ def recalc_wo(wo: WorkOrder, steps: Sequence[WoRouteStep]) -> None:
     wo.current_step_seq = cur.seq if cur else None
 
     p30 = next((s for s in ordered if s.process_code == "P30"), None)
-    if p30 is not None and p30.status in {"DONE", "DONE_ESTIMATED", "PARTIAL"}:
-        wo.qty_good = p30.qty_good or 0
-        wo.qty_bad = p30.qty_bad or 0
+    if p30 is not None:
+        if p30.status in {"DONE", "DONE_ESTIMATED", "PARTIAL"}:
+            wo.qty_good = p30.qty_good or 0
+            wo.qty_bad = p30.qty_bad or 0
+        else:
+            # S4 E6 cancel_wo_event 가 replay_steps 로 P30 을 DONE→WAITING 되돌릴 수 있다(다른
+            # 어떤 경로도 이전엔 P30 을 역행시키지 않았다) — 그때 이 캐시 컬럼을 그대로 두면
+            # 되돌려진 뒤에도 예전 양품/불량 수량이 남아 대시보드·실적집계가 틀어진다.
+            wo.qty_good = 0
+            wo.qty_bad = 0
 
     if wo.status in WO_FIXED:
         return
