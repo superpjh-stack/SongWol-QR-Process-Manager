@@ -23,6 +23,8 @@ export type StockSource = 'IMS_XLS' | 'NEW' | 'COUNT'
 export type TargetType = 'SO' | 'WO' | 'LT' | 'US' | 'VB'
 export type ScanAction = 'START' | 'DONE' | 'RECEIVE' | 'PACK' | 'SHIP' | 'LOGIN' | 'CANCEL' | 'REPRINT' | 'APPROVE' | 'MAP'
 export type ScanResult = 'OK' | 'WARN' | 'REJECT'
+/** api-contract §16.1 (B2-09). 생략 시 서버가 HID 로 간주 */
+export type InputVia = 'HID' | 'CAMERA' | 'MANUAL' | 'URL'
 export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'DENIED'
 export type DefectType = 'COLOR' | 'POSITION' | 'STAIN' | 'EMB_LOOSE' | 'OTHER' // [확장]
 export type VarianceReasonCode = 'SHORT_INPUT' | 'MISCOUNT' | 'DEFECT_EXTRA' | 'SPLIT_MOVED' | 'OTHER' // E2 사유 (§13.5 ⑨)

@@ -20,7 +20,7 @@ export type StepTimelineStep = {
   processName: string
   status: StepStatus
   /** spec §4.4 "인쇄 중 (자수 대기)" 같은 문구 대체 */
-  labelOverride?: string
+  labelOverride?: string | undefined
   /** [S6] 설비별 진행. 파일럿은 항상 [] — 없어도(undefined) 동작한다 */
   works?: StepTimelineWork[]
 }

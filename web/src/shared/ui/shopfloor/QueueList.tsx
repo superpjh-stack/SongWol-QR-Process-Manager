@@ -28,7 +28,7 @@ export type QueueListProps = {
   onSelect?: (item: QueueItem) => void
   emptyText?: string
   /** 오프라인 캐시로 보여주는 중이면 마지막 성공 조회 시각(ISO). 있으면 "hh:mm 기준" 을 상단에 표시 (§0.6) */
-  staleAt?: string
+  staleAt?: string | undefined
   className?: string
 }
 

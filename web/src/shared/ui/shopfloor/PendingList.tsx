@@ -16,7 +16,7 @@ export type PendingListItem = {
   code: string
   /** 액션 표시명 — 화면이 ScanActionLabel 등으로 미리 계산해 넘긴다 */
   actionLabel: string
-  message?: string
+  message?: string | undefined
   /** KSK-90: 재전송 시도 횟수 */
   attempts?: number
   /** KSK-90: §0.6 8시간 보존 한도 초과 — 행 전체 빨간 테두리 */

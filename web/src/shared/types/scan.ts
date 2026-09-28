@@ -4,6 +4,7 @@ import type {
   ApprovalStatus,
   DefectType,
   EquipType,
+  InputVia,
   Inspection,
   LabelType,
   LoginVia,
@@ -54,6 +55,7 @@ export interface ScanRequest {
   extra?: ScanExtra
   qty_box?: number // 추가
   client_seq?: number // 추가
+  input_via?: InputVia // 추가 (§16.1). 생략 시 서버가 HID 로 간주
 }
 
 export interface ScanWoSummary {
@@ -115,10 +117,10 @@ export interface ScanBatchResponse {
 }
 
 export interface ApproveRequest {
-  approver_card?: string
+  approver_card?: string | undefined
   pin?: string
   decision: 'APPROVE' | 'DENY'
-  note?: string
+  note?: string | undefined
   note_code?: VarianceReasonCode
 } // ㉔ note → variance_reason
 

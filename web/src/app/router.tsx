@@ -4,6 +4,7 @@ import { Placeholder } from './Placeholder'
 import { adminRoute, loginRoute } from '@/admin/routes'
 import { QrLandingPage } from '@/q/QrLandingPage'
 import { SetupPage } from '@/setup/SetupPage'
+import { KioskApp } from '@/kiosk/KioskApp'
 
 // dev 전용 공용 컴포넌트 갤러리 (웨이브 B 디자인). prod 번들에는 들어가지 않는다.
 const DevGallery = lazy(() => import('./DevGallery'))
@@ -28,7 +29,7 @@ export const router = createBrowserRouter([
   },
   loginRoute,
   adminRoute,
-  { path: '/kiosk/*', element: <Placeholder name="공정 키오스크" spec="§9.2" /> },
+  { path: '/kiosk/*', element: <KioskApp /> },
   { path: '/pda/*', element: <Placeholder name="PDA / 입고·발송" spec="§9.3" /> },
   { path: '/board/*', element: <Placeholder name="현황판" spec="§9.5" /> },
   { path: '/q/:code', element: <QrLandingPage /> },

@@ -19,10 +19,16 @@ export type IdleScreenProps = {
   banner?: ReactNode
   /** 우상단 보조 액션 (로그아웃·재발행 등) */
   actions?: ReactNode
+  /**
+   * 중앙 안내 문구 아래 추가 슬롯 (KSK-01 로그인 화면의 ID·PIN 폼/토글 링크 등, screens-shopfloor §0.3).
+   * 개발③ 추가 — 디자인 웨이브가 만든 원래 IdleScreen 은 이 화면을 KSK-10 전용으로 봤지만, `workerName`
+   * 이 없을 때(로그인 전) 문구가 이미 "작업자 카드를 스캔하세요"로 바뀌므로 KSK-01 에도 그대로 재사용한다.
+   */
+  promptExtra?: ReactNode
   className?: string
 }
 
-export function IdleScreen({ processName, workerName, stationId, pendingCount = 0, queue, banner, actions, className }: IdleScreenProps) {
+export function IdleScreen({ processName, workerName, stationId, pendingCount = 0, queue, banner, actions, promptExtra, className }: IdleScreenProps) {
   return (
     <div className={cn('density-shopfloor flex min-h-dvh flex-col bg-surface-2', className)} data-component="IdleScreen">
       {banner}
@@ -52,6 +58,7 @@ export function IdleScreen({ processName, workerName, stationId, pendingCount = 
           <p className="text-sf-lg text-ink-muted">
             {workerName ? '작업지시서 또는 라벨의 QR 을 스캐너에 대세요' : '로그인 후 작업 QR 을 스캔할 수 있습니다'}
           </p>
+          {promptExtra}
         </section>
         <section className="flex flex-col gap-3">
           <h2 className="text-sf-lg font-bold text-ink-muted">이 공정 대기 (납기순)</h2>

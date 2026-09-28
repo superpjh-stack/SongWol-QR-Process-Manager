@@ -91,7 +91,7 @@ export type ScanResultCardProps = {
   /** ScanResponse.warnings[] — 주황 줄로 각각 나열 */
   warnings?: string[]
   /** OK·saved 는 2000, 그 외 undefined 로 두면 탭까지 유지된다 (§0.7) */
-  autoDismissMs?: number
+  autoDismissMs?: number | undefined
   onDismiss?: () => void
   /** 하단 액션 슬롯 */
   children?: ReactNode

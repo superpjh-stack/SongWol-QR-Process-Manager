@@ -110,10 +110,10 @@ export type WarnBannerEntry = {
   id: string
   kind: WarnBannerKind
   message: ReactNode
-  at?: string
-  woCode?: string
-  count?: number
-  action?: { label: string; onClick: () => void }
+  at?: string | undefined
+  woCode?: string | undefined
+  count?: number | undefined
+  action?: { label: string; onClick: () => void } | undefined
 }
 
 /**
