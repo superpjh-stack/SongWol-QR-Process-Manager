@@ -520,7 +520,10 @@ function Detail({ wo, refetch }: { wo: WorkOrderDetail; refetch: () => Promise<v
         }
       />
       {pdf.error ? <ApiErrorAlert error={pdf.error} onRetry={() => void pdf.mutate(undefined).catch(() => undefined)} className="mb-3" /> : null}
-      <p className="mb-3 text-ad-xs text-ink-muted">예외 승인 대기는 별도 화면 → <Link to="/admin/wo/pending" className="text-brand-700 hover:underline">ADM-17</Link></p>
+      {/* QA2-S4 수정(axe link-in-text-block, serious): 문장 중간에 낀 링크가 밑줄 등 색 외의
+          구분 수단 없이 hover 시에만 밑줄이 붙어 주변 회색 텍스트와 대비도 부족했다(1.06:1,
+          기준 3:1) — 상시 underline 으로 색 없이도 구분되게 한다. */}
+      <p className="mb-3 text-ad-xs text-ink-muted">예외 승인 대기는 별도 화면 → <Link to="/admin/wo/pending" className="text-brand-700 underline">ADM-17</Link></p>
       <section className="mb-4 flex flex-col gap-4 rounded-ad border border-line bg-surface p-4 lg:flex-row">
         <div className="shrink-0">
           {wo.design_thumbnail_url ? (

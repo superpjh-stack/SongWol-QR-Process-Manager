@@ -803,8 +803,13 @@ async def _last_reflected_event(session: AsyncSession, wo_id: int) -> ScanEvent 
             ScanEvent.wo_id == wo_id,
             ScanEvent.action.in_(STATE_CHANGING_ACTIONS),
             ScanEvent.result != "REJECT",
-            ScanEvent.approval_status != "PENDING",
-            ScanEvent.result_msg != "이미 처리됨",
+            # QA2-S4 수정: approval_status·result_msg 는 nullable 이라 `!=` 비교가 SQL 3치
+            # 논리(NULL <> 'x' = NULL, WHERE 에서 걸러짐)로 승인 절차를 거치지 않은(가장 흔한)
+            # 이벤트를 전부 조용히 제외시켜 왔다 — E6 취소가 "마지막 반영 이벤트만" 게이트에서
+            # 사실상 거의 모든 정상 경로에서 항상 거부되던 결함(DEF-QA2-S4-001).
+            # NULL-safe 비교로 수정.
+            ScanEvent.approval_status.is_distinct_from("PENDING"),
+            ScanEvent.result_msg.is_distinct_from("이미 처리됨"),
         )
         .order_by(ScanEvent.received_at.desc())
         .limit(1)

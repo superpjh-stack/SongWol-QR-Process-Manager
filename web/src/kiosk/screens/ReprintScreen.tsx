@@ -124,10 +124,28 @@ export function ReprintScreen({ printerId, offline, onBack }: ReprintScreenProps
   }
 
   if (phase === 'done' && selected) {
+    // QA2-S4 수정(DEF-QA2-S4-003): §13.7 계약상 프린터 실패는 예외가 아니라 200 + zpl_sent=false
+    // 로 돌아온다(발행 차수는 이미 올라간다) — printLabel() 이 성공적으로 resolve 됐다고 해서
+    // 실제로 라벨이 나왔다는 뜻이 아니다. 이 화면이 zpl_sent 를 보지 않고 무조건 성공 화면으로
+    // 넘어가던 것을, 같은 원칙을 이미 쓰고 있는 PackResultScreen(라벨 미출력/재출력) 패턴 그대로
+    // 맞춘다 — "조용한 실패 금지".
+    const printed = labelJob?.zpl_sent === true
     return (
       <div className="mx-auto flex max-w-2xl flex-col items-center gap-6 pt-8 text-center">
-        <IconCheck size={64} className="text-status-done-fg" aria-hidden="true" />
-        <p className="text-sf-xl font-bold">재발행 {labelJob?.issue_no ?? '—'}차 출력됨</p>
+        {printed ? (
+          <>
+            <IconCheck size={64} className="text-status-done-fg" aria-hidden="true" />
+            <p className="text-sf-xl font-bold">재발행 {labelJob?.issue_no ?? '—'}차 출력됨</p>
+          </>
+        ) : (
+          <>
+            <IconX size={64} className="text-status-error-fg" aria-hidden="true" />
+            <p className="text-sf-xl font-bold text-status-error-fg" role="alert">
+              라벨 미출력 — {labelJob?.error === 'PRINTER_UNREACHABLE' ? '프린터 연결 실패' : (labelJob?.error ?? '출력 실패')}
+            </p>
+            <p className="text-sf-body text-ink-muted">발행 이력은 {labelJob?.issue_no ?? '—'}차로 기록됐습니다 — 프린터 확인 후 다시 출력하세요.</p>
+          </>
+        )}
         <p className="font-mono text-sf-lg">{selected.code}</p>
         <div className="flex gap-touch-gap">
           <BigButton
@@ -139,7 +157,13 @@ export function ReprintScreen({ printerId, offline, onBack }: ReprintScreenProps
           >
             다른 WO 검색
           </BigButton>
-          <BigButton onClick={onBack}>완료</BigButton>
+          {printed ? (
+            <BigButton onClick={onBack}>완료</BigButton>
+          ) : (
+            <BigButton icon={<IconTag size={24} />} loading={printing} disabled={printing || !printerId || offline} onClick={() => void doPrint()}>
+              다시 출력
+            </BigButton>
+          )}
         </div>
       </div>
     )

@@ -253,6 +253,62 @@ async def test_cancel_last_done_event_reverts_step_and_recalcs(
     assert any(e["action"] == "CANCEL" for e in events)
 
 
+async def test_cancel_last_done_event_without_approval_succeeds(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """DEF-QA2-S4-001 회귀: 정상 RECEIVE→DONE(E1 승인을 거치지 않는, 절대다수의 실제 경로)에서
+    ``approval_status`` 는 NULL 로 남는다. ``_last_reflected_event`` 가 ``approval_status !=
+    "PENDING"`` 처럼 SQL 3치 논리에 취약한 비교를 쓰면 NULL 행이 WHERE 에서 전부 걸러져 이
+    가장 흔한 경로의 취소가 "마지막 반영 이벤트만" 409 로 언제나 거부된다(승인을 거친 경우만
+    ``_wo_p30_done_with_defect`` 처럼 approval_status='APPROVED' 가 돼 우연히 통과했었다 —
+    기존 E6 테스트가 전부 그 헬퍼만 써서 이 결함을 못 잡았다). NULL-safe 비교(``is_distinct_from``)
+    로 수정 후 이 테스트가 통과해야 한다.
+    """
+    station_id, api_key, eq_code = await _setup_p30_station_and_equipment(client, admin_headers)
+    worker = await _worker_card()
+    p20_station, p20_key = await ensure_station(uniq("T-K-P20-"), type_="KIOSK", process_code="P20")
+    _m, wo = await _issued_wo(client, admin_headers)
+    wo_code = wo["code"]
+
+    recv_body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo_code,
+        action="RECEIVE",
+        qty_good=500,
+        extra={"inspection": "PASS"},
+    )
+    res0 = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=recv_body)
+    assert res0.status_code == 200 and res0.json()["result"] == "OK", res0.text
+
+    done_body = scan_body(
+        station_id=station_id,
+        worker_card=worker,
+        code=wo_code,
+        action="DONE",
+        equipment_code=eq_code,
+        qty_good=500,
+        qty_bad=0,
+    )
+    res1 = await client.post(f"{API}/scan", headers={"X-Station-Key": api_key}, json=done_body)
+    assert res1.status_code == 200 and res1.json()["result"] == "OK", res1.text
+    event_uuid = res1.json()["event_uuid"]
+
+    detail = (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()
+    p30 = next(s for s in detail["steps"] if s["process_code"] == "P30")
+    assert p30["status"] == "DONE" and p30["qty_good"] == 500
+
+    res = await client.post(
+        f"{API}/wo/{wo_code}/events/{event_uuid}/cancel",
+        headers=admin_headers,
+        json={"reason": "잘못된 스캔 (승인 불필요 경로)"},
+    )
+    assert res.status_code == 200, res.text
+    p30_after = next(s for s in res.json()["steps"] if s["process_code"] == "P30")
+    assert p30_after["status"] == "WAITING"
+    assert p30_after["qty_good"] is None and p30_after["qty_bad"] is None
+
+
 async def test_cancel_non_last_event_is_409(
     client: AsyncClient, admin_headers: dict[str, str]
 ) -> None:

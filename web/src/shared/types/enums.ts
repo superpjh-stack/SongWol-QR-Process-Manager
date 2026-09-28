@@ -60,7 +60,11 @@ export const NOTIFICATION_TYPES: readonly NotificationType[] = ['DELAY', 'DEFECT
 export const NOTIFICATION_CHANNELS: readonly NotificationChannel[] = ['KAKAO', 'SMS', 'PUSH', 'EMAIL', 'INAPP']
 export const OFFLINE_STATES: readonly OfflineState[] = ['ONLINE', 'WARN', 'ERROR']
 export const AUDIT_ACTIONS: readonly AuditAction[] = ['INSERT', 'UPDATE', 'DELETE', 'APPROVE']
-/** ADM-30 필터 셀렉트 (screens-admin §2 훅 대상 목록, db §7.2) */
+/** ADM-30 필터 셀렉트 (screens-admin §2 훅 대상 목록, db §7.2 + S4 QA2 수정).
+ * QA2-S4: 'work_order'·'scan_event' 가 누락돼 있었다 — backend/app/db/audit.py 의 자동 훅이
+ * work_order 변경을 실제로 기록하고(hold/resume/cancel_wo 등 real diff), S4 신규 액션(분할·
+ * 재작업·이벤트취소E6·스캔승인/거부)은 scan_event/work_order 에 수동으로 감사 로그를 남기는데도
+ * 드롭다운으로는 이 둘을 아예 선택할 수 없어 필터링이 불가능했다(DEF-QA2-S4-005). */
 export const AUDIT_TABLES: readonly string[] = [
   'customer',
   'customer_address',
@@ -77,4 +81,6 @@ export const AUDIT_TABLES: readonly string[] = [
   'sales_order_line',
   'design',
   'stock_txn',
+  'work_order',
+  'scan_event',
 ]
