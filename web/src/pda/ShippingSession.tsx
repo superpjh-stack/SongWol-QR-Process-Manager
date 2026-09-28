@@ -231,6 +231,12 @@ export function ShippingSession({ station, processName, bootOffline }: { station
   async function doShipSubmit() {
     if (!worker || boxRows.length === 0 || !trackingNo.trim()) return
     setPhase('CONFIRM')
+    // DEF-QA2-S3-001: check 를 안 실으면서 inputVia 만 'HID' 로 고정하면 스캔 엔진이 매번
+    // VALIDATION_ERROR("check 가 필요합니다")로 거부한다(§16.2 는 input_via=MANUAL 일 때만 체크코드
+    // 생략을 허용) — PDA 발송이 100% 실패하던 원인. 이 박스는 이미 `stationApi.box()` 로 존재를
+    // 확인한 뒤 목록에 올라온 것이라(§2 PDA-20), 체크코드 없이도 MANUAL 로 보내는 것이 맞는 의미다
+    // (MappingScreen 의 MAP 요청·CameraScanDialog 수기입력과 같은 원칙: "체크코드 없이 존재 여부만
+    // 서버가 확인").
     const events = boxRows.map((row) =>
       buildShipScanRequest({
         stationId: station.id,
@@ -239,7 +245,7 @@ export function ShippingSession({ station, processName, bootOffline }: { station
         check: null,
         trackingNo: trackingNo.trim(),
         carrier: carrier.trim() || null,
-        inputVia: 'HID',
+        inputVia: 'MANUAL',
         eventUuid: newEventUuid(),
         clientSeq: nextClientSeq(),
       }),
