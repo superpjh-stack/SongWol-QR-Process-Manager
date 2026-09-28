@@ -28,6 +28,8 @@ export type SearchSelectProps<T> = Pick<FieldProps, 'label' | 'required' | 'hint
   id?: string | undefined
   /** 오류 메시지 변환 (ApiError → 문구). 없으면 Error.message */
   errorText?: ((e: unknown) => string) | undefined
+  /** label 없이 표 안에서 쓸 때 (접근성, D53). 선택 해제 버튼 라벨에도 붙는다 */
+  ariaLabel?: string | undefined
 }
 
 export function SearchSelect<T>({
@@ -48,6 +50,7 @@ export function SearchSelect<T>({
   wrapperClassName,
   id,
   errorText,
+  ariaLabel,
 }: SearchSelectProps<T>) {
   const listId = useId()
   const [open, setOpen] = useState(false)
@@ -109,7 +112,7 @@ export function SearchSelect<T>({
               <span className="truncate">{getLabel(value)}</span>
               <button
                 type="button"
-                aria-label="선택 해제"
+                aria-label={ariaLabel ? `${ariaLabel} 선택 해제` : '선택 해제'}
                 disabled={disabled}
                 onClick={() => {
                   onChange(null)
@@ -128,6 +131,7 @@ export function SearchSelect<T>({
               aria-expanded={open}
               aria-controls={listId}
               aria-autocomplete="list"
+              aria-label={ariaLabel}
               aria-invalid={c.invalid || undefined}
               aria-describedby={c.describedBy}
               autoComplete="off"

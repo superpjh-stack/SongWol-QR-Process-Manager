@@ -73,6 +73,8 @@ export const ERROR_CODE_MESSAGES: Readonly<Record<string, string>> = {
   LOCKED: '잠시 후 다시 시도하세요',
   PIN_LOCKED: 'PIN 이 잠겼습니다 — 잠시 후 다시 시도',
   LOGIN_LOCKED: '로그인이 잠겼습니다 — 잠시 후 다시 시도',
+  // 500 (전역 예외 핸들러, 계약 §3.1 형식 — S1 QA DEF-005)
+  INTERNAL_ERROR: '서버 오류 — 잠시 후 다시 시도하세요',
   // 503
   DB_UNAVAILABLE: '서비스 일시 중단',
   PRINTER_UNREACHABLE: '프린터에 연결할 수 없습니다',

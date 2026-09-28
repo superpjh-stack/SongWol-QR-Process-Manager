@@ -26,7 +26,7 @@
 
   --color-ink: #0f172a; /* 본문 글자 */
   --color-ink-muted: #475569; /* 보조 글자 (흰 배경 대비 7.5:1) */
-  --color-ink-faint: #94a3b8; /* placeholder 전용 */
+  --color-ink-faint: #5b6b82; /* placeholder·빈 값. 흰 배경 5.4:1, surface-2 5.1:1, surface-3 4.6:1 (D53) */
   --color-surface: #ffffff;
   --color-surface-2: #f5f7fa; /* 페이지 배경 */
   --color-surface-3: #e8edf3; /* 구분·hover */
@@ -43,7 +43,7 @@
   --color-status-progress-bg: #dbeafe;
   --color-status-progress-line: #93c5fd;
   /* 완료 DONE / PACKED / SHIPPED / CLOSED / FULL */
-  --color-status-done-fg: #15803d;
+  --color-status-done-fg: #166534; /* done-bg 위 6.5:1, 흰 배경 7.1:1 — 성공 토스트 대비 (D53) */
   --color-status-done-bg: #dcfce7;
   --color-status-done-line: #86efac;
   /* 추정완료 DONE_ESTIMATED (반장 승인 보정) */
@@ -109,13 +109,12 @@
 
   /* ── 애니메이션 ───────────────────────────────────────────────── */
   --animate-toast-in: toast-in 160ms ease-out;
+  /* 투명도 애니메이션 없음 — 페이드 중 글자 대비가 일시적으로 떨어져 axe color-contrast 가 잡힌다 (D53). 이동만 */
   @keyframes toast-in {
     from {
-      opacity: 0;
       transform: translateY(8px);
     }
     to {
-      opacity: 1;
       transform: translateY(0);
     }
   }

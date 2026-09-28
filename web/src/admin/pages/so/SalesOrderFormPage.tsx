@@ -260,6 +260,7 @@ function SoForm({ initial, printMethods, onSaved }: { initial: SalesOrderDetail 
                               </span>
                             )}
                             errorText={apiErrorText}
+                            ariaLabel={`라인 ${i + 1} 품목`}
                             placeholder="품목 코드·명 검색"
                             error={le?.item?.message}
                           />
@@ -269,13 +270,13 @@ function SoForm({ initial, printMethods, onSaved }: { initial: SalesOrderDetail 
                     </td>
                     <td className="px-2 py-2 text-ink-muted">{item ? [item.spec, item.color].filter(Boolean).join(' · ') || '—' : '—'}</td>
                     <td className="px-2 py-2">
-                      <Select options={pmOptions} placeholder="선택" error={le?.print_method?.message} hint={lines[i]?.print_method === 'NONE' ? '도안 불필요' : undefined} {...register(`lines.${i}.print_method`)} />
+                      <Select aria-label={`라인 ${i + 1} 가공방식`} options={pmOptions} placeholder="선택" error={le?.print_method?.message} hint={lines[i]?.print_method === 'NONE' ? '도안 불필요' : undefined} {...register(`lines.${i}.print_method`)} />
                     </td>
                     <td className="px-2 py-2">
-                      <NumberInput min={1} step={1} error={le?.qty?.message} {...register(`lines.${i}.qty`, { setValueAs: numOrUndef })} />
+                      <NumberInput aria-label={`라인 ${i + 1} 수량`} min={1} step={1} error={le?.qty?.message} {...register(`lines.${i}.qty`, { setValueAs: numOrUndef })} />
                     </td>
                     <td className="px-2 py-2">
-                      <NumberInput min={0} step={0.01} unit="원" error={le?.unit_price?.message} {...register(`lines.${i}.unit_price`, { setValueAs: numOrUndef })} />
+                      <NumberInput aria-label={`라인 ${i + 1} 단가`} min={0} step={0.01} unit="원" error={le?.unit_price?.message} {...register(`lines.${i}.unit_price`, { setValueAs: numOrUndef })} />
                     </td>
                     <td className="px-2 py-2">
                       <Button size="sm" variant="ghost" disabled={fields.length <= 1} onClick={() => remove(i)} aria-label={`라인 ${i + 1} 삭제`}>

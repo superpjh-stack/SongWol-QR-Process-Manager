@@ -89,6 +89,13 @@ function DesignUploadModal({ so, line, onClose, onDone }: { so: SalesOrderDetail
 function ProposalModal({ so, open, drafts, setDrafts, processes, onClose, onIssued }: { so: SalesOrderDetail; open: boolean; drafts: WoDraft[]; setDrafts: (d: WoDraft[]) => void; processes: Process[]; onClose: () => void; onIssued: (r: IssueWoResponse) => void }) {
   const issue = useApiMutation((d: WoDraft[]) => soApi.issueWo(so.id, { drafts: d }))
   const [splitIdx, setSplitIdx] = useState<number | null>(null)
+  // 재오픈 시 이전 409 알림·분리 입력 초기화 (DEF-QA2-S1-007)
+  useEffect(() => {
+    if (open) {
+      issue.reset()
+      setSplitIdx(null)
+    }
+  }, [open, issue.reset])
   const [splitQty, setSplitQty] = useState<number>(0)
   const pname = processNameFn(processes)
   const lineOf = (id: number) => so.lines.find((l) => l.id === id)

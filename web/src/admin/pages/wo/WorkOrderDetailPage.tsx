@@ -223,6 +223,7 @@ function IssuesTab({ wo }: { wo: WorkOrderDetail }) {
     { key: 'label_type', header: '라벨', render: (r) => LabelTypeLabel[r.label_type] },
     { key: 'issue_no', header: '차수', align: 'right', render: (r) => <span className="tabular-nums">{r.issue_no}</span> },
     { key: 'printer_id', header: '프린터', render: (r) => <CodeText code={r.printer_id} /> },
+    { key: 'sent_at', header: '전송 시각', render: (r) => <span className="tabular-nums">{formatDateTime(r.sent_at, true)}</span> },
     { key: 'copies', header: '매수', align: 'right' },
     {
       key: 'zpl_sent',
@@ -233,7 +234,7 @@ function IssuesTab({ wo }: { wo: WorkOrderDetail }) {
         ) : r.zpl_sent && !r.error ? (
           <StatusBadge kind="scanResult" status="OK" labelOverride="전송" />
         ) : (
-          <StatusBadge kind="scanResult" status="REJECT" labelOverride={r.error ?? '미전송 (프린터 없음)'} />
+          <StatusBadge kind="scanResult" status="REJECT" labelOverride={r.error ?? '미전송'} />
         ),
     },
     { key: 'issued_by', header: '발행자', render: (r) => r.issued_by?.name ?? '—' },
