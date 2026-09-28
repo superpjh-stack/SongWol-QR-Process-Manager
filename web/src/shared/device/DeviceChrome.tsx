@@ -1,7 +1,12 @@
 /**
- * KSK-20·30·31·40·50·60·61 공용 상단 고정 영역 (screens-shopfloor §0.9): 공정명·단말ID·작업자명·
- * 연결상태/미전송 N건·승인 대기 N·시각. KSK-10·01 은 디자인 웨이브의 `IdleScreen` 이 자체 헤더를 갖고
- * 있어 그대로 쓴다 — 이 컴포넌트는 그 외 화면들이 공유한다.
+ * 로그인 후 전 화면(키오스크 KSK-20·30·31·40·50·60·61 · PDA-11~13·20~22) 공용 상단 고정 영역
+ * (screens-shopfloor §0.9): 공정명·단말ID·작업자명·연결상태/미전송 N건·승인 대기 N·시각.
+ * KSK-10·01(로그인 전)은 디자인 웨이브의 `IdleScreen` 이 자체 헤더를 갖고 있어 그대로 쓴다 — 이
+ * 컴포넌트는 로그인 이후 화면들이 공유한다.
+ *
+ * 원래 `kiosk/KioskChrome.tsx`(이름 `KioskChrome`)였던 것을 PDA 도 그대로 재사용할 수 있어 여기로
+ * 옮겼다 — P30 전용 내용이 하나도 없다(§0.9 상단 고정 영역 표는 "전 단말 공통"). PDA 는 세로 화면이라
+ * `flex-wrap` 만으로 줄바꿈되어 그대로 맞는다(spec §0.9 "PDA 는 세로 — 같은 컴포넌트, 레이아웃만 반응형").
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { ConnectionIndicator, WarnBannerList, type ConnectionStatus, type WarnBannerEntry } from '@/shared/ui/shopfloor'
@@ -16,7 +21,7 @@ function useClock(): string {
   return new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Seoul' }).format(now)
 }
 
-export type KioskChromeProps = {
+export type DeviceChromeProps = {
   processName: string
   stationId: string
   workerName: string
@@ -31,7 +36,7 @@ export type KioskChromeProps = {
   children: ReactNode
 }
 
-export function KioskChrome({
+export function DeviceChrome({
   processName,
   stationId,
   workerName,
@@ -44,10 +49,10 @@ export function KioskChrome({
   banners,
   onDismissBanner,
   children,
-}: KioskChromeProps) {
+}: DeviceChromeProps) {
   const clock = useClock()
   return (
-    <div className="density-shopfloor flex min-h-dvh flex-col bg-surface-2" data-component="KioskChrome">
+    <div className="density-shopfloor flex min-h-dvh flex-col bg-surface-2" data-component="DeviceChrome">
       <WarnBannerList items={banners} onDismiss={onDismissBanner} />
       <header className="flex flex-wrap items-center justify-between gap-4 border-b-2 border-line bg-surface px-6 py-3">
         <div className="flex items-baseline gap-4">

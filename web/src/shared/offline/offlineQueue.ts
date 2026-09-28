@@ -135,6 +135,33 @@ export async function submitScan(req: ScanRequest, timeoutMs = SUBMIT_TIMEOUT_MS
   }
 }
 
+export type SubmitBatchOutcome =
+  | { status: 'ok'; results: Array<{ event_uuid: string; response: ScanResponse }> }
+  | { status: 'queued' }
+
+/**
+ * PDA-21 [발송 확정] — 박스 여러 개를 SHIP 이벤트 여러 건으로 묶어 "저장 → 즉시 배치 전송" 한다
+ * (screens-shopfloor §2 PDA-21 "박스 1개당 SHIP 이벤트 1건을 만들어 큐에 넣고 즉시 POST /scan/batch 로
+ * 한 번에 전송"). `submitScan` 의 다건판 — 같은 저장소(`pending_scans`)·같은 제거 규칙(200 이면 삭제)을
+ * 쓴다, 새 큐를 만들지 않는다. 온라인이면 즉시 결과를 받아 화면(PDA-22)이 건별 성공/실패를 보여줄 수
+ * 있고, 오프라인/실패면 큐에 남아 `useOfflineQueue` 의 통상 flush 트리거(온라인 복귀·30초·visibility)가
+ * 나중에 처리한다.
+ */
+export async function submitBatch(events: ScanRequest[]): Promise<SubmitBatchOutcome> {
+  for (const req of events) await enqueue(req)
+  try {
+    const batchRes = await scanApi.batch(events)
+    for (const item of batchRes.results) {
+      if (item.event_uuid) await remove(item.event_uuid)
+    }
+    return { status: 'ok', results: batchRes.results }
+  } catch (e) {
+    const msg = errorMessageOf(e)
+    for (const req of events) await markAttempt(req.event_uuid, msg)
+    return { status: 'queued' }
+  }
+}
+
 export type FlushResult = { attempted: number; removed: number; responses: Array<{ event_uuid: string; response: ScanResponse }> }
 
 let flushing = false

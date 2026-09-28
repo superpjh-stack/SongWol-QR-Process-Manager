@@ -1,6 +1,8 @@
 /**
  * KSK-90 오프라인 큐 상태·미전송 목록 (screens-shopfloor §1 KSK-90, [S4] 화면이나 큐 메커니즘은 S2 부터
  * 동작해야 하므로 최소 화면을 함께 만든다). 삭제 버튼 없음(유실 금지) — [지금 전송] 만.
+ * 오프라인 큐는 단말 유형과 무관하게 하나(§0.6)라 `kiosk/screens/PendingQueueScreen.tsx` 에서 여기로
+ * 옮겨 PDA 의 "미전송 목록"도 그대로 재사용한다.
  */
 import { isStale } from '@/shared/offline'
 import { BigButton, ConnectionIndicator, PendingList, type ConnectionStatus, type PendingListItem } from '@/shared/ui/shopfloor'

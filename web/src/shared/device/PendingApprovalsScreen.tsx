@@ -1,5 +1,6 @@
 /**
  * KSK-61 승인 대기 목록 (screens-shopfloor §1 KSK-61). `GET /scan/pending?station_id=` → 행 탭 → KSK-60.
+ * 단말 유형과 무관해 `kiosk/screens/PendingApprovalsScreen.tsx` 에서 여기로 옮겨 PDA 도 재사용한다.
  */
 import { useEffect, useState } from 'react'
 import { scanApi } from '@/shared/api'

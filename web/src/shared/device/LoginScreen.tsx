@@ -1,7 +1,10 @@
 /**
  * KSK-01 작업자 로그인 (screens-shopfloor §0.3). 카드 스캔 우선, 카드 분실 시 ID+PIN.
  * 오프라인(네트워크 오류)이고 카드 스캔이면 「미검증 작업자」로 로컬 로그인을 허용한다(§0.3 기본값(제안)) —
- * 온라인 복귀 시 화면(KioskSession)이 `/auth/worker` 를 다시 불러 이름으로 교체한다.
+ * 온라인 복귀 시 화면(KioskSession/ReceivingSession/ShippingSession)이 `/auth/worker` 를 다시 불러 이름으로 교체한다.
+ *
+ * P30 전용 내용이 없어(§0.3 표는 "전 단말" 공통) `kiosk/screens/LoginScreen.tsx` 에서 여기로 옮겨
+ * PDA(P20·P60)도 그대로 재사용한다.
  */
 import { useState } from 'react'
 import { authApi } from '@/shared/api'

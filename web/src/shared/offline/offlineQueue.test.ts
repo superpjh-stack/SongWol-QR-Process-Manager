@@ -149,3 +149,69 @@ describe('offlineQueue — write-then-send 순서', () => {
     expect(await listAll()).toHaveLength(1) // 그래도 지워지지 않는다 (유실 금지)
   })
 })
+
+describe('submitBatch (PDA-21 박스별 SHIP 이벤트 → 즉시 배치 전송)', () => {
+  beforeEach(async () => {
+    vi.resetModules()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(globalThis as any).indexedDB = new (await import('fake-indexeddb')).IDBFactory()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function shipReq(eventUuid: string, clientSeq: number, boxCode: string): ScanRequest {
+    return {
+      event_uuid: eventUuid,
+      scanned_at: '2026-10-01T09:00:00+09:00',
+      station_id: 'K-P60-1',
+      worker_card: 'US-0007',
+      code: boxCode,
+      check: null,
+      action: 'SHIP',
+      extra: { tracking_no: '123456789012' },
+      client_seq: clientSeq,
+    }
+  }
+
+  it('전송 전 먼저 큐에 저장한다(저장 → 전송)', async () => {
+    const { submitBatch, listAll } = await import('./offlineQueue')
+    const scan = await import('../api/scan')
+    const events = [shipReq('c1111111-0000-0000-0000-000000000001', 1, 'LT-261001-0001'), shipReq('c1111111-0000-0000-0000-000000000002', 2, 'LT-261001-0002')]
+
+    vi.spyOn(scan.scanApi, 'batch').mockImplementation(async () => {
+      expect(await listAll()).toHaveLength(2) // 배치 호출 시점에 이미 큐에 있어야 한다
+      return { results: events.map((e) => ({ event_uuid: e.event_uuid, response: okResponse(e.event_uuid) })) }
+    })
+
+    const outcome = await submitBatch(events)
+    expect(outcome.status).toBe('ok')
+    if (outcome.status === 'ok') expect(outcome.results).toHaveLength(2)
+    expect(await listAll()).toHaveLength(0) // 200 응답 → 전부 큐에서 삭제
+  })
+
+  it('일부만 응답에 실려도 그 건만 큐에서 제거한다(건별 실패는 다음을 막지 않는다)', async () => {
+    const { submitBatch, listAll } = await import('./offlineQueue')
+    const scan = await import('../api/scan')
+    const events = [shipReq('c2222222-0000-0000-0000-000000000001', 1, 'LT-261001-0001'), shipReq('c2222222-0000-0000-0000-000000000002', 2, 'LT-261001-0002')]
+
+    vi.spyOn(scan.scanApi, 'batch').mockResolvedValue({ results: [{ event_uuid: events[0]!.event_uuid, response: okResponse(events[0]!.event_uuid) }] })
+
+    await submitBatch(events)
+    const remaining = await listAll()
+    expect(remaining.map((r) => r.event_uuid)).toEqual([events[1]!.event_uuid])
+  })
+
+  it('배치 호출 자체가 실패하면 큐에 남기고 attempts 를 올린다(status=queued)', async () => {
+    const { submitBatch, listAll } = await import('./offlineQueue')
+    const scan = await import('../api/scan')
+    const events = [shipReq('c3333333-0000-0000-0000-000000000001', 1, 'LT-261001-0001')]
+    vi.spyOn(scan.scanApi, 'batch').mockRejectedValue(new Error('network down'))
+
+    const outcome = await submitBatch(events)
+    expect(outcome.status).toBe('queued')
+    const all = await listAll()
+    expect(all).toHaveLength(1)
+    expect(all[0]?.attempts).toBe(1)
+  })
+})

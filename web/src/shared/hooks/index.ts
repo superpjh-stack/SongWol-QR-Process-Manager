@@ -17,6 +17,8 @@ export {
   SETUP_VERSION,
 } from './useStationConfig'
 export type { SetupParams, StationConfig, SetupParse, UseStationConfigResult } from './useStationConfig'
+export { useStationBoot } from './useStationBoot'
+export type { StationBootState, UseStationBootResult } from './useStationBoot'
 export { useAuth, useAuthStore } from './useAuth'
 export type { Auth, AuthState, AuthStatus } from './useAuth'
 export {

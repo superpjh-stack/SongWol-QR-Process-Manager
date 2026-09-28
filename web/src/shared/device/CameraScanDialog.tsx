@@ -5,6 +5,9 @@
  * (HID 스캐너와 동일한 파싱 경로), `input_via` 태깅은 호출부(KioskSession)가 한다.
  * 수기 입력은 `check` 를 생략할 수 있으므로(§16.2) 화면은 대상 코드만 받고 확인 카드(고객·품목)는
  * 상위 SCANNED 화면이 보여준다 — 이 다이얼로그는 코드 접수까지만 한다.
+ *
+ * P30 전용 내용이 없어 `kiosk/CameraScanDialog.tsx` 에서 여기로 옮겨 PDA(P20·P60) 도 재사용한다
+ * (과제 지시: "카메라/수기 스캔 입력은 PDA 에도 필요 — CameraScanDialog 재사용, 재구현 금지").
  */
 import { useEffect, useRef, useState } from 'react'
 import jsQR from 'jsqr'

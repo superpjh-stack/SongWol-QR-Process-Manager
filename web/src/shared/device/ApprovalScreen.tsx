@@ -1,6 +1,10 @@
 /**
  * KSK-60 경고/승인 — 반장 PIN (screens-shopfloor §1 KSK-60). 온라인 전용(§13.2 ⑪) — `PinDialog` 의
  * `offline` prop 이 [승인]/[거부] 를 막는다. API 호출은 이 화면이 한다(다이얼로그는 순수 UI).
+ *
+ * `POST /scan/{event_uuid}/approve` 는 액션(DONE·PACK·RECEIVE·SHIP)과 무관하게 같은 모양이라
+ * `kiosk/screens/ApprovalScreen.tsx` 에서 여기로 옮겨 PDA 의 승인 대기(WARN+requires_approval)도
+ * 그대로 재사용한다.
  */
 import { useState } from 'react'
 import { scanApi } from '@/shared/api'

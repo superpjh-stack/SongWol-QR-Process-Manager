@@ -5,6 +5,7 @@ export {
   pendingCount,
   isStale,
   submitScan,
+  submitBatch,
   flushQueue,
   nextClientSeq,
   subscribe,
@@ -13,6 +14,6 @@ export {
   BATCH_MAX,
   SUBMIT_TIMEOUT_MS,
 } from './offlineQueue'
-export type { SubmitOutcome, FlushResult } from './offlineQueue'
+export type { SubmitOutcome, SubmitBatchOutcome, FlushResult } from './offlineQueue'
 export { useOfflineQueue } from './useOfflineQueue'
 export type { UseOfflineQueueResult, OfflineConnStatus, FlushedEntry } from './useOfflineQueue'

@@ -2,25 +2,14 @@
  * 키오스크 상태 머신의 순수 로직 (screens-shopfloor §1.0 · KSK-20·30·31·40·50). API 호출·React 상태와
  * 분리해 테스트 가능하게 뒀다 — `KioskSession.tsx` 가 이 함수들을 부수효과에 연결한다.
  */
-import type { InputVia, RouteStep, ScanExtra, ScanRequest, ScanResponse, VarianceReasonCode, WorkOrderDetail } from '../shared/types'
-import type { ScanResultVariant } from '../shared/ui/shopfloor'
+import { nowKstIso } from '../shared/scanUtil'
+import type { InputVia, RouteStep, ScanExtra, ScanRequest, VarianceReasonCode, WorkOrderDetail } from '../shared/types'
 
-/** 현재 시각을 `+09:00` 오프셋의 ISO 8601 로 (api-contract §5.1 `scanned_at`, KST 는 DST 없음) */
-export function nowKstIso(d: Date = new Date()): string {
-  const shifted = new Date(d.getTime() + 9 * 60 * 60 * 1000)
-  return shifted.toISOString().replace('Z', '+09:00')
-}
-
-/** event_uuid 생성 — `crypto.randomUUID` 없는 매우 구형 환경 대비 폴백 포함 */
-export function newEventUuid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
-  // RFC4122 v4 폴백 (테스트·구형 WebView 전용, 암호학적 강도는 필요 없다 — 멱등키 용도)
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    const v = c === 'x' ? r : (r & 0x3) | 0x8
-    return v.toString(16)
-  })
-}
+/**
+ * KST 시각·event_uuid 생성·결과 변형 판정은 PDA 와 공유하는 `shared/scanUtil.ts` 로 옮겼다 —
+ * 이름은 그대로 재수출해 기존 import 경로(이 파일의 테스트 포함)를 깨지 않는다.
+ */
+export { newEventUuid, nowKstIso, scanResultVariant, autoDismissMsFor } from '../shared/scanUtil'
 
 function findStep(wo: WorkOrderDetail, processCode: string): RouteStep | undefined {
   return wo.steps.find((s) => s.process_code === processCode)
@@ -99,19 +88,6 @@ export function buildDoneScanRequest(input: BuildDoneRequestInput): ScanRequest 
     client_seq: input.clientSeq,
     input_via: input.inputVia,
   }
-}
-
-/** api-contract §3.3 result × requires_approval → ScanResultCard variant (§0.7) */
-export function scanResultVariant(res: Pick<ScanResponse, 'result' | 'requires_approval'>): ScanResultVariant {
-  if (res.result === 'REJECT') return 'reject'
-  if (res.result === 'WARN' && res.requires_approval) return 'approval'
-  if (res.result === 'WARN') return 'warn'
-  return 'ok'
-}
-
-/** OK·저장됨(saved) 만 2초 자동 닫힘, 그 외(WARN·승인·REJECT)는 탭까지 유지 (§0.7) */
-export function autoDismissMsFor(variant: ScanResultVariant | 'saved'): number | undefined {
-  return variant === 'ok' || variant === 'saved' ? 2000 : undefined
 }
 
 /** KSK-20 사전 경고 — status 로 [완료] 를 미리 막을지 (api-contract §5.2 2단계 예고, 화면 측) */

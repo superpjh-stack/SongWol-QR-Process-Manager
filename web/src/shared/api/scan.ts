@@ -15,6 +15,12 @@ import { loadStationConfig } from '../hooks/useStationConfig'
 import type {
   ApproveRequest,
   Equipment,
+  InboundLot,
+  LabelJob,
+  LabelPrintRequest,
+  Page,
+  PackBox,
+  PackBoxDetail,
   PendingScan,
   Process,
   QueueResponse,
@@ -22,6 +28,7 @@ import type {
   ScanRequest,
   ScanResponse,
   Station,
+  VendorBarcodeLookup,
   WorkOrderDetail,
 } from '../types'
 
@@ -67,4 +74,20 @@ export const stationApi = {
   /** GET /api/v1/wo/{code} (STATION R, 코드 허용) — KSK-20 WO 요약 조회 */
   wo: (code: string, signal?: AbortSignal) =>
     api.get<WorkOrderDetail>(`${P}/wo/${encodeURIComponent(code)}`, { headers: stationHeaders(), ...(signal ? { signal } : {}) }),
+  /**
+   * PDA(P20·P60) 전용 조회·액션 — STATION 키만으로 부른다(워커 로그인은 JWT 를 발급하지 않는다, §0.3).
+   * `shared/api/material.ts`·`shipping.ts`·`label.ts` 의 같은 리소스는 관리자 JWT 전용이라 여기서
+   * 별도로 둔다(그 파일들은 admin 웹 전용 — 건드리지 않는다).
+   */
+  /** GET /api/v1/boxes/{code} (STATION R) — PDA-20 박스 QR 조회 */
+  box: (code: string) => api.get<PackBoxDetail>(`${P}/boxes/${encodeURIComponent(code)}`, { headers: stationHeaders() }),
+  /** GET /api/v1/boxes?wo_code=&unshipped=true (STATION R) — PDA-20 WO 대체 경로 · PDA-22 미발송 잔여 경고 */
+  unshippedBoxes: (woCode: string) =>
+    api.get<Page<PackBox>>(`${P}/boxes${qs({ wo_code: woCode, unshipped: true })}`, { headers: stationHeaders() }),
+  /** GET /api/v1/vendor-barcodes/{barcode} (STATION R) — PDA-10 업체 바코드 매핑 조회 */
+  vendorBarcodeLookup: (barcode: string) => api.get<VendorBarcodeLookup>(`${P}/vendor-barcodes/${encodeURIComponent(barcode)}`, { headers: stationHeaders() }),
+  /** POST /api/v1/lots/{code}/quarantine {memo} (STATION W) — PDA-13 FAIL 격리 메모 */
+  quarantineLot: (code: string, memo: string) => api.post<InboundLot>(`${P}/lots/${encodeURIComponent(code)}/quarantine`, { memo }, { headers: stationHeaders() }),
+  /** POST /api/v1/labels/print (STATION W) — KSK-81 박스 라벨 재출력 */
+  printLabel: (body: LabelPrintRequest) => api.post<LabelJob>(`${P}/labels/print`, body, { headers: stationHeaders() }),
 }

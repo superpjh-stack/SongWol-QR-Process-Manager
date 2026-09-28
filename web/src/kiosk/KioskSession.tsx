@@ -9,21 +9,24 @@ import { isApiError } from '@/shared/api/client'
 import { parseScanCode, useIdleLogout, useScannerInput, useWakeLock } from '@/shared/hooks'
 import { nextClientSeq, submitScan, useOfflineQueue, type FlushedEntry } from '@/shared/offline'
 import { IdleScreen, QueueList, WarnBannerList, type EquipmentOption, type QueueItem as UiQueueItem, type ScanResultVariant, type WarnBannerEntry } from '@/shared/ui/shopfloor'
+import { DeviceChrome } from '@/shared/device/DeviceChrome'
+import { CameraScanDialog } from '@/shared/device/CameraScanDialog'
+import { LoginScreen } from '@/shared/device/LoginScreen'
+import { ApprovalScreen } from '@/shared/device/ApprovalScreen'
+import { PendingApprovalsScreen } from '@/shared/device/PendingApprovalsScreen'
+import { PendingQueueScreen } from '@/shared/device/PendingQueueScreen'
 import type { Equipment, InputVia, LoginVia, ParsedCode, PendingScan, QueueItem, QueueResponse, ScanResponse, Station, UserSummary, VarianceReasonCode, WorkOrderDetail } from '@/shared/types'
 import { buildDoneScanRequest, defaultGoodQty, isToleranceExceeded, newEventUuid, nowKstIso, scanResultVariant } from './kioskLogic'
-import { KioskChrome } from './KioskChrome'
-import { CameraScanDialog } from './CameraScanDialog'
-import { LoginScreen } from './screens/LoginScreen'
+import { buildPackScanRequest, computeDefaultQtyBox, packRemainingQty, readRememberedPackQtyBox, rememberPackQtyBox } from './packLogic'
 import { ScannedScreen } from './screens/ScannedScreen'
 import { QtyScreen } from './screens/QtyScreen'
 import { ReasonScreen } from './screens/ReasonScreen'
 import { ConfirmScreen } from './screens/ConfirmScreen'
 import { ResultScreen } from './screens/ResultScreen'
-import { ApprovalScreen } from './screens/ApprovalScreen'
-import { PendingApprovalsScreen } from './screens/PendingApprovalsScreen'
-import { PendingQueueScreen } from './screens/PendingQueueScreen'
+import { PackScannedScreen } from './screens/PackScannedScreen'
+import { PackResultScreen } from './screens/PackResultScreen'
 
-type Phase = 'IDLE' | 'SCANNED' | 'QTY' | 'REASON' | 'CONFIRM' | 'RESULT' | 'APPROVAL' | 'PENDING_APPROVALS' | 'PENDING_QUEUE'
+type Phase = 'IDLE' | 'SCANNED' | 'QTY' | 'REASON' | 'CONFIRM' | 'RESULT' | 'APPROVAL' | 'PENDING_APPROVALS' | 'PENDING_QUEUE' | 'PACK_SCANNED' | 'PACK_RESULT'
 
 type ScannedCode = { code: string; check: string | null; inputVia: InputVia }
 type ResultData = { kind: 'response'; variant: ScanResultVariant; response: ScanResponse } | { kind: 'saved'; pendingCount: number }
@@ -33,17 +36,18 @@ function equipmentOptionsOf(list: Equipment[]): EquipmentOption[] {
   return list.filter((e) => e.active).map((e) => ({ code: e.code, name: e.name, equipType: e.equip_type }))
 }
 
-function woDetailFromQueueItem(item: QueueItem): WorkOrderDetail {
+function woDetailFromQueueItem(item: QueueItem, processCode: string, processName: string): WorkOrderDetail {
   // 오프라인 캐시 대체 카드 — 타임라인·오차 판정에 필요한 정보가 부족하므로 tolerance/qty_in 은 비워
   // 화면이 "판정 불가 → 바로 전송" 경로를 타게 한다 (screens-shopfloor §13 스캔 엔진 개발자 전제 3).
+  // 단일 fake step 은 이 단말의 공정(P30 또는 P50)으로 라벨링한다 — 둘 다 같은 함수를 쓴다.
   return {
     ...item.wo,
     steps: [
       {
         id: 0,
         seq: item.wo.current_step_seq ?? 1,
-        process_code: 'P30',
-        process_name: '인쇄',
+        process_code: processCode,
+        process_name: processName,
         std_lead_hours: 0,
         tolerance_pct: 0,
         status: item.step_status,
@@ -90,6 +94,10 @@ function newBannerId(): string {
 export function KioskSession({ station, processName, bootOffline }: { station: Station; processName: string; bootOffline?: boolean }) {
   useWakeLock()
 
+  // 공정 코드는 단말 고정(§0.2) — P30 은 DONE 흐름(KSK-20~61), P50 은 PACK 흐름(KSK-80/81). 같은
+  // 코드베이스, 이 플래그 하나로 goToScanned·doSubmit 계열·승인 후 이동을 분기한다.
+  const isP50 = station.process_code === 'P50'
+
   const [worker, setWorker] = useState<UserSummary | null>(null)
   const [, setLoginVia] = useState<LoginVia | null>(null)
   const [pendingLoginScan, setPendingLoginScan] = useState<ScannedCode | null>(null)
@@ -108,6 +116,9 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
   const [qtyGood, setQtyGood] = useState('')
   const [qtyBad, setQtyBad] = useState('')
   const [reason, setReason] = useState<{ code: VarianceReasonCode | null; text: string }>({ code: null, text: '' })
+
+  // P50 전용 — KSK-80 박스당 입수
+  const [qtyBox, setQtyBox] = useState('')
 
   const [resultData, setResultData] = useState<ResultData | null>(null)
   const [approvalCtx, setApprovalCtx] = useState<ApprovalCtx | null>(null)
@@ -185,7 +196,7 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
   const goToScanned = useCallback(
     async (code: string, check: string | null, inputVia: InputVia) => {
       setScanned({ code, check, inputVia })
-      setPhase('SCANNED')
+      setPhase(isP50 ? 'PACK_SCANNED' : 'SCANNED')
       setWo(null)
       setWoError(null)
       setWoOfflineNoDetail(false)
@@ -194,28 +205,39 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
       setEquipmentCode(null)
       setQtyGood('')
       setQtyBad('')
+      setQtyBox('')
       setReason({ code: null, text: '' })
+      const applyDetail = (detail: WorkOrderDetail) => {
+        if (isP50) {
+          const remaining = packRemainingQty(detail)
+          const def = computeDefaultQtyBox(readRememberedPackQtyBox(station.id), remaining)
+          setQtyBox(def !== null ? String(def) : '')
+        } else {
+          void loadEquipment(detail.print_method)
+        }
+      }
       try {
         const detail = await stationApi.wo(code)
         setWo(detail)
-        void loadEquipment(detail.print_method)
+        applyDetail(detail)
       } catch (e) {
         if (isApiError(e) && e.status === 404) {
           setWoError(e.message)
         } else {
           const cached = queueData?.items.find((i) => i.wo.code === code)
           if (cached) {
-            setWo(woDetailFromQueueItem(cached))
+            const detail = woDetailFromQueueItem(cached, station.process_code ?? (isP50 ? 'P50' : 'P30'), processName)
+            setWo(detail)
             setWoOfflineNoDetail(true)
-            void loadEquipment(cached.wo.print_method)
+            applyDetail(detail)
           }
-          // 캐시도 없으면 wo=null 유지 → ScannedScreen 이 코드만 보여준다
+          // 캐시도 없으면 wo=null 유지 → 화면이 코드만 보여준다
         }
       } finally {
         setWoLoading(false)
       }
     },
-    [loadEquipment, queueData],
+    [loadEquipment, queueData, isP50, station.id, station.process_code, processName],
   )
 
   const handleParsed = useCallback(
@@ -232,9 +254,13 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
         }
         return
       }
+      if (isP50 && parsed.type === 'LT') {
+        pushBanner({ kind: 'warning', message: '박스 QR 은 발송(P60)에서 스캔합니다' })
+        return
+      }
       pushBanner({ kind: 'warning', message: `이 단말에서는 처리할 수 없는 코드입니다 (${parsed.type})` })
     },
-    [phase, goToScanned, pushBanner],
+    [phase, goToScanned, pushBanner, isP50],
   )
 
   const scannerEnabled = Boolean(worker && worker.card_code)
@@ -309,6 +335,67 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
     }
   }
 
+  async function doPackSubmit(qtyBoxValue: number) {
+    if (!wo || !worker || !scanned) return
+    setPhase('CONFIRM')
+    const req = buildPackScanRequest({
+      stationId: station.id,
+      workerCard: worker.card_code ?? '',
+      code: scanned.code,
+      check: scanned.check,
+      qtyBox: qtyBoxValue,
+      inputVia: scanned.inputVia,
+      eventUuid: newEventUuid(),
+      clientSeq: nextClientSeq(),
+      scannedAt: nowKstIso(),
+    })
+    const outcome = await submitScan(req)
+    if (outcome.status === 'ok') {
+      const variant = scanResultVariant(outcome.response)
+      if (variant === 'approval' && outcome.response.event_uuid) {
+        setApprovalCtx({ eventUuid: outcome.response.event_uuid, approvalToken: outcome.response.approval_token, message: outcome.response.message })
+        setPhase('APPROVAL')
+        return
+      }
+      if (variant === 'ok' || variant === 'warn') rememberPackQtyBox(station.id, qtyBoxValue)
+      if (variant === 'warn') {
+        pushBanner({ kind: 'warning', message: outcome.response.message, woCode: outcome.response.wo?.code, at: nowKstIso() })
+      }
+      setResultData({ kind: 'response', variant, response: outcome.response })
+      setPhase('PACK_RESULT')
+    } else if (outcome.status === 'invalid') {
+      pushBanner({ kind: 'error', message: `요청 형식 오류: ${outcome.error.message}`, woCode: wo.code, at: nowKstIso() })
+      setPhase('PACK_SCANNED')
+    } else {
+      setResultData({ kind: 'saved', pendingCount: offlineQueue.pendingCount + 1 })
+      setPhase('PACK_RESULT')
+    }
+  }
+
+  function onPackConfirm() {
+    const n = Number(qtyBox || 0)
+    if (n <= 0) return
+    void doPackSubmit(n)
+  }
+
+  /**
+   * KSK-81 [다음 박스] — 같은 WO 로 KSK-80 복귀, 입수 기본값 유지(§1 KSK-81 "연속 포장"). `goToScanned` 를
+   * 그대로 재사용해 방금 보낸 박스가 누계에 반영된 최신 WO(남은 수량·박스 목록)를 다시 받는다.
+   */
+  function onPackNextBox() {
+    setResultData(null)
+    if (!wo) {
+      setPhase('IDLE')
+      return
+    }
+    void goToScanned(wo.code, scanned?.check ?? null, scanned?.inputVia ?? 'HID')
+  }
+
+  function onPackResultDone() {
+    setResultData(null)
+    setPhase('IDLE')
+  }
+
   function onQtyConfirm() {
     if (!wo) return
     const good = Number(qtyGood || 0)
@@ -333,11 +420,11 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
     const variant = scanResultVariant(response)
     if (variant === 'warn') pushBanner({ kind: 'warning', message: response.message, woCode: response.wo?.code, at: nowKstIso() })
     setResultData({ kind: 'response', variant, response })
-    setPhase('RESULT')
+    setPhase(isP50 ? 'PACK_RESULT' : 'RESULT')
   }
   function onDenied(response: ScanResponse) {
     setResultData({ kind: 'response', variant: 'reject', response })
-    setPhase('RESULT')
+    setPhase(isP50 ? 'PACK_RESULT' : 'RESULT')
   }
   function onApprovalDefer() {
     setApprovalCtx(null)
@@ -411,7 +498,7 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
   }
 
   return (
-    <KioskChrome
+    <DeviceChrome
       processName={processName}
       stationId={station.id}
       workerName={worker.name}
@@ -435,6 +522,21 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
           equipmentValue={equipmentCode}
           onEquipmentChange={setEquipmentCode}
           onConfirm={() => setPhase('QTY')}
+          onCancel={() => setPhase('IDLE')}
+        />
+      ) : null}
+
+      {phase === 'PACK_SCANNED' && scanned ? (
+        <PackScannedScreen
+          code={scanned.code}
+          wo={wo}
+          loading={woLoading}
+          errorMessage={woError}
+          offlineNoDetail={woOfflineNoDetail}
+          offline={offlineQueue.status === 'offline'}
+          qtyBox={qtyBox}
+          onQtyBoxChange={setQtyBox}
+          onConfirm={onPackConfirm}
           onCancel={() => setPhase('IDLE')}
         />
       ) : null}
@@ -465,8 +567,9 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
         />
       ) : null}
 
-      {phase === 'CONFIRM' && wo ? (
+      {phase === 'CONFIRM' && wo && !isP50 ? (
         <ConfirmScreen
+          kind="done"
           woCode={wo.code}
           equipmentName={equipmentOptions.find((e) => e.code === equipmentCode)?.name ?? equipmentCode ?? '—'}
           qtyGood={Number(qtyGood || 0)}
@@ -475,11 +578,29 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
         />
       ) : null}
 
+      {phase === 'CONFIRM' && wo && isP50 ? <ConfirmScreen kind="pack" woCode={wo.code} qtyBox={Number(qtyBox || 0)} /> : null}
+
       {phase === 'RESULT' && resultData ? (
         resultData.kind === 'saved' ? (
           <ResultScreen kind="saved" code={scanned?.code ?? wo?.code ?? '—'} pendingCount={resultData.pendingCount} onDismiss={onResultDismiss} />
         ) : (
           <ResultScreen kind="response" code={scanned?.code ?? wo?.code ?? '—'} variant={resultData.variant} response={resultData.response} onDismiss={onResultDismiss} />
+        )
+      ) : null}
+
+      {phase === 'PACK_RESULT' && resultData ? (
+        resultData.kind === 'saved' ? (
+          <PackResultScreen kind="saved" code={scanned?.code ?? wo?.code ?? '—'} pendingCount={resultData.pendingCount} onDismiss={onPackNextBox} />
+        ) : (
+          <PackResultScreen
+            kind="response"
+            code={scanned?.code ?? wo?.code ?? '—'}
+            variant={resultData.variant}
+            response={resultData.response}
+            printerId={station.printer_id}
+            onNextBox={onPackNextBox}
+            onDone={onPackResultDone}
+          />
         )
       ) : null}
 
@@ -507,6 +628,6 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
           onClose={() => setPhase('IDLE')}
         />
       ) : null}
-    </KioskChrome>
+    </DeviceChrome>
   )
 }
