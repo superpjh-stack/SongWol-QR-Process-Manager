@@ -108,6 +108,23 @@ async def verify_pin(session: AsyncSession, user: AppUser, pin: str) -> None:
     raise ApiError(401, "BAD_PIN", f"PIN 이 올바르지 않습니다 (남은 시도 {remaining}회)")
 
 
+async def resolve_manager_approver(session: AsyncSession, card_code: str, pin: str) -> AppUser:
+    """카드+PIN 승인자 해석 — MANAGER/ADMIN 만 (§14.1 「승인 PIN」: `/scan/{uuid}/approve` ·
+    STATION `POST /wo/{id}/split` 이 공유하는 경로). 카드 없음 404, 역할 부족 403
+    ``APPROVER_ROLE``, PIN 은 ``verify_pin``(카운터·잠금 공유).
+    """
+    card = card_code.strip().upper()
+    approver = (
+        await session.execute(select(AppUser).where(AppUser.card_code == card))
+    ).scalar_one_or_none()
+    if approver is None:
+        raise ApiError(404, "USER_CARD_NOT_FOUND", f"카드 {card} 에 해당하는 사용자가 없습니다")
+    if approver.role not in ("MANAGER", "ADMIN"):
+        raise ApiError(403, "APPROVER_ROLE", "승인 권한이 없습니다")
+    await verify_pin(session, approver, pin)
+    return approver
+
+
 async def _record_login_event(
     session: AsyncSession, station: Station, user: AppUser, login_via: str
 ) -> None:

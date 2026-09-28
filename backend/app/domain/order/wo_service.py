@@ -10,7 +10,12 @@
   전부 한 트랜잭션.
 - 상태 전이(§2.3): hold ISSUED/IN_PROGRESS→ON_HOLD · resume ON_HOLD→재계산 · cancel
   DRAFT/ISSUED/IN_PROGRESS/ON_HOLD/PACKED→CANCELLED · close PACKED/SHIPPED→CLOSED. 위반 409
-  ``STATE_CONFLICT``. split · rework · reprint 는 S3/S4/개발B.
+  ``STATE_CONFLICT``. rework · reprint 는 S4/개발B.
+- ``split_wo`` (B4-04, §13.4 shopfloor ⑱ [S3]): ISSUED/IN_PROGRESS 만. 하위 WO(`-A`~`-Z`, UK
+  (parent_wo_id, split_suffix))를 만들고 라우팅을 복사한다(1단계 qty_in = 분할 수량, shopfloor
+  ⑧). 26개 초과 409 ``SPLIT_LIMIT``. STATION 은 ``approver_card``+``pin``(MANAGER/ADMIN,
+  `/auth/worker`·승인과 같은 ``verify_pin`` 경로) — 카드 없이 JWT 만이면 라우터의
+  ``require_roles`` 가 이미 ADMIN/MANAGER 로 제한한다.
 """
 
 from __future__ import annotations
@@ -22,14 +27,17 @@ from typing import Any
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import Principal
 from app.api.v1.schemas import order as S
 from app.api.v1.schemas.common import normalize_code
 from app.api.v1.schemas.master import RoutingStepInput
 from app.core.errors import ApiError, not_found, state_conflict, validation
-from app.core.sequence import next_code
+from app.core.sequence import next_code, split_code
 from app.db.models.master import AppUser, Customer, Item, ItemRouting, PrintMethod
+from app.db.models.ops import AuditLog
 from app.db.models.order import Design, SalesOrder, SalesOrderLine, WorkOrder, WoRouteStep
 from app.db.models.scan import ScanEvent
+from app.domain.auth.service import resolve_manager_approver
 from app.domain.common.listing import PageParams, paginate, parse_sort, q_filter
 from app.domain.master import service as master
 from app.domain.order import ports, recalc, so_service
@@ -48,6 +56,7 @@ WO_Q = (WorkOrder.code, SalesOrder.code, Customer.name, Item.name)
 HOLDABLE = frozenset({"ISSUED", "IN_PROGRESS"})
 CANCELLABLE = frozenset({"DRAFT", "ISSUED", "IN_PROGRESS", "ON_HOLD", "PACKED"})
 CLOSABLE = frozenset({"PACKED", "SHIPPED"})
+SPLITTABLE = frozenset({"ISSUED", "IN_PROGRESS"})
 
 
 # ======================================================================
@@ -444,3 +453,131 @@ async def close_wo(session: AsyncSession, key: str) -> WorkOrder:
     wo.status = "CLOSED"
     wo.closed_at = datetime.now(UTC)
     return await _finish(session, wo)
+
+
+# ======================================================================
+# 분할 (B4-04, api-contract §7.3 spec · §13.4 shopfloor ⑱ [S3])
+# ======================================================================
+async def _resolve_split_approver(
+    session: AsyncSession, principal: Principal, body: S.SplitRequest
+) -> AppUser:
+    """JWT 는 라우터의 ``require_roles(*WO_MANAGE, station=True)`` 가 ADMIN/MANAGER 로 이미
+    제한했다. STATION 은 ``approver_card``+``pin`` 필수(§13.4 ⑱, §14.1 「승인 PIN」과 같은 경로)."""
+    if principal.user is not None:
+        return principal.user
+    if not body.approver_card or not body.pin:
+        raise validation(["body", "approver_card"], "approver_card 와 pin 이 필요합니다")
+    return await resolve_manager_approver(session, body.approver_card, body.pin)
+
+
+async def split_wo(
+    session: AsyncSession, key: str, body: S.SplitRequest, principal: Principal
+) -> tuple[WorkOrder, WorkOrder]:
+    """하위 WO 분할 — 입고 부족·분할 발송(A3-04(b)·B4-04). 라우팅을 그대로 복사하고
+    ``parent.qty_ordered`` 를 분할 수량만큼 줄인다. 병합은 없다(B4-04 "병합 금지").
+
+    채번은 ``core.sequence.split_code``(spec §2.1) 를 그대로 쓴다 — 접미사는 재사용하지 않고
+    항상 다음 글자를 쓴다(인쇄된 코드 보호), 26개 초과·이미 분할된 WO 재분할은 ``ValueError``
+    로 알려온다.
+    """
+    approver = await _resolve_split_approver(session, principal, body)
+
+    wo = await resolve_wo(session, key)
+    if wo.status not in SPLITTABLE:
+        raise state_conflict(f"작업지시 상태 {wo.status} — 분할할 수 없습니다")
+    if body.qty >= wo.qty_ordered:
+        raise validation(
+            ["body", "qty"], f"분할 수량은 작업지시 수량({wo.qty_ordered}) 보다 작아야 합니다"
+        )
+    remaining = wo.qty_ordered - body.qty
+    progressed = max(wo.qty_received, wo.qty_good, wo.qty_packed, wo.qty_shipped)
+    if remaining < progressed:
+        raise ApiError(
+            409,
+            "STATE_CONFLICT",
+            f"이미 진행된 수량({progressed})보다 적게 남기고 분할할 수 없습니다",
+        )
+
+    used_suffixes = {
+        s
+        for s in (
+            await session.execute(
+                select(WorkOrder.split_suffix).where(WorkOrder.parent_wo_id == wo.id)
+            )
+        )
+        .scalars()
+        .all()
+        if s is not None  # CHECK split_parent 로 실제로는 항상 non-null (mypy 용)
+    }
+    try:
+        child_code = split_code(wo.code, used_suffixes)
+    except ValueError as e:
+        if "split limit" in str(e):
+            raise ApiError(409, "SPLIT_LIMIT", "분할은 26개(A~Z)를 초과할 수 없습니다") from e
+        raise ApiError(
+            409, "STATE_CONFLICT", "이미 분할된 작업지시는 다시 분할할 수 없습니다"
+        ) from e
+    suffix = child_code.rsplit("-", 1)[-1]
+
+    parent_steps = await _steps_of(session, wo)
+    now = datetime.now(UTC)
+    child = WorkOrder(
+        code=child_code,
+        parent_wo_id=wo.id,
+        split_suffix=suffix,
+        so_id=wo.so_id,
+        so_line_id=wo.so_line_id,
+        item_id=wo.item_id,
+        print_method=wo.print_method,
+        design_version=wo.design_version,
+        qty_ordered=body.qty,
+        status="ISSUED",
+        issued_at=now,
+    )
+    session.add(child)
+    await session.flush()
+
+    child_steps: list[WoRouteStep] = []
+    for i, s in enumerate(sorted(parent_steps, key=lambda x: x.seq)):
+        step = WoRouteStep(
+            wo_id=child.id,
+            seq=s.seq,
+            process_code=s.process_code,
+            std_lead_hours=s.std_lead_hours,
+            tolerance_pct=s.tolerance_pct,
+            status="WAITING",
+            qty_in=body.qty if i == 0 else None,  # shopfloor ⑧: 1단계 qty_in = 분할 수량
+            started_at=now if i == 0 else None,
+        )
+        session.add(step)
+        child_steps.append(step)
+    await session.flush()
+    recalc.recalc_wo(child, child_steps)
+
+    wo.qty_ordered = remaining
+    recalc.recalc_wo(wo, parent_steps)
+
+    so = await session.get(SalesOrder, wo.so_id)
+    assert so is not None
+    await session.flush()
+    await recalc.recalc_so(session, so)
+
+    session.add(
+        AuditLog(
+            table_name="work_order",
+            row_id=wo.id,
+            action="UPDATE",
+            before=None,
+            after={
+                "split_reason": body.reason,
+                "split_child_code": child.code,
+                "split_qty": body.qty,
+            },
+            user_id=approver.id,
+        )
+    )
+
+    await session.commit()
+    await session.refresh(wo)
+    await session.refresh(child)
+    return wo, child

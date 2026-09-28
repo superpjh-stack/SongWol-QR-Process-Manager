@@ -1,6 +1,6 @@
-"""작업지시 라우터 (api-contract §7.3). ``/wo`` 목록·상세·이벤트·hold·resume·cancel·close.
+"""작업지시 라우터 (api-contract §7.3). ``/wo`` 목록·상세·이벤트·hold·resume·cancel·close·split.
 
-split · rework · reprint · search 는 S3/S4/개발B 몫이라 여기 없다.
+rework · reprint · search 는 S4/개발B 몫이라 여기 없다.
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ router = APIRouter(prefix="/wo", tags=["work-order"])
 
 _r = Depends(require_roles(*P.ORDER_READ, station=True))
 _m = Depends(require_roles(*P.WO_MANAGE))
+# §13.4 shopfloor ⑱ [S3]: STATION 도 허용(본문 approver_card+pin 은 서비스가 검사한다)
+_split_gate = Depends(require_roles(*P.WO_MANAGE, station=True))
 
 
 @router.get("", response_model=Page[S.WorkOrderSummary], dependencies=[_r])
@@ -91,3 +93,14 @@ async def cancel_wo(
 @router.post("/{key}/close", response_model=S.WorkOrder, dependencies=[_m])
 async def close_wo(key: str, session: AsyncSession = Session) -> S.WorkOrder:
     return await _out(session, await wo_service.close_wo(session, key))
+
+
+@router.post("/{key}/split", response_model=S.SplitResponse)
+async def split_wo(
+    key: str,
+    body: S.SplitRequest,
+    principal: Principal = _split_gate,
+    session: AsyncSession = Session,
+) -> S.SplitResponse:
+    parent, child = await wo_service.split_wo(session, key, body, principal)
+    return S.SplitResponse(parent=await _out(session, parent), child=await _out(session, child))

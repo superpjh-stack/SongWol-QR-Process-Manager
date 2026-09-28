@@ -476,9 +476,17 @@ async def test_printer(session: AsyncSession, printer_id: str) -> S.PrinterTestR
 # 출력 (POST /labels/print)
 # ======================================================================
 async def print_label(
-    session: AsyncSession, body: S.LabelPrintRequest, principal: Principal
+    session: AsyncSession,
+    body: S.LabelPrintRequest,
+    principal: Principal,
+    *,
+    extra_ctx: dict[str, Any] | None = None,
 ) -> LabelJob:
+    """``extra_ctx``: 호출자가 대상 조회로는 알 수 없는 플레이스홀더를 덮어쓴다(§13.7 ⑬ 오프라인
+    포장의 ``offline_seq`` — PACK 스캔이 ``client_seq`` 를 넘긴다). 기본은 없음(기존 동작 유지)."""
     target_type, ctx = await target_context(session, body.label_type, body.target)
+    if extra_ctx:
+        ctx = {**ctx, **extra_ctx}
     printer = await select_printer(session, body.printer, principal.station)
     label_type = body.label_type
     if printer is None:

@@ -115,12 +115,21 @@ def test_out_of_scope_actions_rejected(action: str) -> None:
 
 
 def test_out_of_scope_action_skips_vb_unmapped_check() -> None:
-    """RECEIVE 가 미매핑 VB 를 스캔해도 ACTION_NOT_YET_SUPPORTED 여야 한다 (VENDOR_BARCODE_UNMAPPED
+    """CANCEL 이 미매핑 VB 를 스캔해도 ACTION_NOT_YET_SUPPORTED 여야 한다 (VENDOR_BARCODE_UNMAPPED
     아님) — 구현 안 된 매핑 조회 결과로 오판하지 않는다."""
+    d = engine.decide(
+        ctx(action="CANCEL", target_type="VB", vb_mapped_wo=False, wo_found=False, steps=())
+    )
+    assert d.code == "ACTION_NOT_YET_SUPPORTED"
+
+
+def test_receive_vb_unmapped_now_in_scope_rejects_unmapped() -> None:
+    """RECEIVE 는 S3 부터 지시 범위 안이다 — 미매핑 VB 는 정상적으로 VENDOR_BARCODE_UNMAPPED."""
     d = engine.decide(
         ctx(action="RECEIVE", target_type="VB", vb_mapped_wo=False, wo_found=False, steps=())
     )
-    assert d.code == "ACTION_NOT_YET_SUPPORTED"
+    assert d.kind == "REJECT"
+    assert d.code == "VENDOR_BARCODE_UNMAPPED"
 
 
 def test_approve_action_via_scan_is_rejected_defensively() -> None:
@@ -650,3 +659,392 @@ def test_next_step_found_and_not_found() -> None:
     steps = default_steps()
     assert engine.next_step(steps, 2).process_code == "P50"
     assert engine.next_step(steps, 4) is None
+
+
+# ======================================================================
+# 16. RECEIVE (S3, api-contract §5.2 5-RECEIVE · §6.3)
+# ======================================================================
+def receive_ctx(**over: object) -> engine.ScanContext:
+    steps = (
+        step(1, "P20", "WAITING", qty_in=500, tolerance_pct=Decimal("3.0"), process_name="입고"),
+        step(2, "P30", "WAITING", process_name="인쇄"),
+    )
+    defaults: dict[str, object] = dict(
+        action="RECEIVE",
+        station_process_code="P20",
+        target_type="WO",
+        check_present=True,
+        check_valid=True,
+        input_via="HID",
+        vb_mapped_wo=False,
+        wo_found=True,
+        wo_status="ISSUED",
+        steps=steps,
+        qty_good=500,
+        qty_box=1,
+        inspection="PASS",
+        recent_same_scan=False,
+        late_arrival=False,
+    )
+    defaults.update(over)
+    return engine.ScanContext(**defaults)  # type: ignore[arg-type]
+
+
+def test_receive_full_within_tolerance_ok() -> None:
+    d = engine.decide(receive_ctx(qty_good=500))
+    assert d.kind == "APPLY"
+    assert d.result == "OK"
+    assert d.receipt_status == "FULL"
+    assert d.step_updates[0].status == "DONE"
+    assert d.step_updates[0].qty_good == 500
+
+
+def test_receive_partial_under_tolerance_warn() -> None:
+    d = engine.decide(receive_ctx(qty_good=400))  # 400 < 500*0.97=485
+    assert d.kind == "APPLY"
+    assert d.result == "WARN"
+    assert d.receipt_status == "PARTIAL"
+    assert d.step_updates[0].status == "PARTIAL"
+    assert "부족 100" in d.message
+
+
+def test_receive_over_tolerance_warn() -> None:
+    d = engine.decide(receive_ctx(qty_good=600))  # 600 > 500*1.03=515
+    assert d.kind == "APPLY"
+    assert d.result == "WARN"
+    assert d.receipt_status == "OVER"
+    assert d.step_updates[0].status == "DONE"
+    assert "초과 100" in d.message
+
+
+def test_receive_exact_tolerance_boundary_full() -> None:
+    d = engine.decide(receive_ctx(qty_good=515))  # diff=15 == allowed(15)
+    assert d.receipt_status == "FULL"
+    assert d.result == "OK"
+
+
+def test_receive_fail_inspection_excluded_from_total() -> None:
+    d = engine.decide(receive_ctx(qty_good=500, inspection="FAIL"))
+    assert d.kind == "APPLY"
+    assert d.result == "WARN"
+    assert d.step_updates[0].qty_good == 0  # 격리 — 누계에 미포함
+    assert d.receipt_status == "PARTIAL"
+    assert "검수 불합격" in d.message
+    assert "검수 불합격 — LOT 격리" in d.warnings
+
+
+def test_receive_missing_inspection_invalid() -> None:
+    d = engine.decide(receive_ctx(inspection=None))
+    assert d.kind == "INVALID_REQUEST"
+    assert d.code == "VALIDATION_ERROR"
+
+
+def test_receive_missing_qty_invalid() -> None:
+    d = engine.decide(receive_ctx(qty_good=None))
+    assert d.kind == "INVALID_REQUEST"
+    assert d.code == "VALIDATION_ERROR"
+
+
+def test_receive_wrong_station_rejected() -> None:
+    d = engine.decide(receive_ctx(station_process_code="P30"))
+    assert d.kind == "REJECT"
+    assert d.code == "STATE_CONFLICT"
+    assert "P20" in d.message
+
+
+def test_receive_dedup_hit_returns_noop() -> None:
+    d = engine.decide(receive_ctx(recent_same_scan=True))
+    assert d.kind == "NOOP"
+    assert d.result == "WARN"
+
+
+def test_receive_accumulates_prior_partial_quantities() -> None:
+    prior = step(1, "P20", "PARTIAL", qty_in=500, qty_good=300, tolerance_pct=Decimal("3.0"))
+    steps = (prior, step(2, "P30", "WAITING"))
+    d = engine.decide(receive_ctx(steps=steps, qty_good=200))
+    assert d.receipt_status == "FULL"
+    assert d.step_updates[0].qty_good == 500
+
+
+def test_receive_no_prev_step_never_blocks() -> None:
+    """P20 은 라우팅의 첫 단계라 직전 단계 미완료(E1) 가 구조적으로 발생하지 않는다."""
+    d = engine.decide(receive_ctx())
+    assert d.kind == "APPLY"
+
+
+def test_receive_variance_reason_recorded_on_step() -> None:
+    d = engine.decide(receive_ctx(qty_good=600, variance_reason="초과 입고"))
+    assert d.step_updates[0].variance_reason == "초과 입고"
+
+
+def test_receive_wo_not_scannable_rejected() -> None:
+    d = engine.decide(receive_ctx(wo_status="PACKED"))
+    assert d.kind == "REJECT"
+    assert d.code == "STATE_CONFLICT"
+
+
+def test_receive_vb_mapped_proceeds() -> None:
+    d = engine.decide(receive_ctx(target_type="VB", vb_mapped_wo=True))
+    assert d.kind == "APPLY"
+
+
+# ======================================================================
+# 17. PACK (S3, api-contract §5.2 5-PACK)
+# ======================================================================
+def pack_ctx(**over: object) -> engine.ScanContext:
+    steps = (
+        step(1, "P20", "DONE", qty_in=500, qty_good=500, process_name="입고"),
+        step(2, "P30", "DONE", qty_in=500, qty_good=480, qty_bad=20, process_name="인쇄"),
+        step(3, "P50", "WAITING", qty_in=480, process_name="포장"),
+        step(4, "P60", "WAITING", process_name="발송"),
+    )
+    defaults: dict[str, object] = dict(
+        action="PACK",
+        station_process_code="P50",
+        target_type="WO",
+        check_present=True,
+        check_valid=True,
+        input_via="HID",
+        vb_mapped_wo=False,
+        wo_found=True,
+        wo_status="IN_PROGRESS",
+        steps=steps,
+        qty_box=100,
+        recent_same_scan=False,
+        late_arrival=False,
+    )
+    defaults.update(over)
+    return engine.ScanContext(**defaults)  # type: ignore[arg-type]
+
+
+def test_accumulate_to_target_below_target() -> None:
+    assert engine.accumulate_to_target(0, 100, 480) == ("PARTIAL", 100)
+
+
+def test_accumulate_to_target_reaches_target() -> None:
+    assert engine.accumulate_to_target(400, 80, 480) == ("DONE", 480)
+
+
+def test_accumulate_to_target_exceeds_target() -> None:
+    assert engine.accumulate_to_target(400, 200, 480) == ("DONE", 600)
+
+
+def test_accumulate_to_target_no_target_stays_partial() -> None:
+    assert engine.accumulate_to_target(0, 50, None) == ("PARTIAL", 50)
+
+
+def test_pack_first_box_partial() -> None:
+    d = engine.decide(pack_ctx(qty_box=100))
+    assert d.kind == "APPLY"
+    assert d.result == "OK"
+    assert d.step_updates[0].status == "PARTIAL"
+    assert d.step_updates[0].qty_good == 100
+    assert "잔여 380" in d.message
+
+
+def test_pack_reaches_target_marks_wo_step_done() -> None:
+    steps = (
+        step(1, "P20", "DONE", qty_in=500, qty_good=500),
+        step(2, "P30", "DONE", qty_in=500, qty_good=480, qty_bad=20),
+        step(3, "P50", "PARTIAL", qty_in=480, qty_good=400),
+        step(4, "P60", "WAITING"),
+    )
+    d = engine.decide(pack_ctx(steps=steps, qty_box=80))
+    assert d.step_updates[0].status == "DONE"
+    assert d.step_updates[0].qty_good == 480
+    assert d.step_updates[0].mark_done_at is True
+    assert "포장 완료" in d.message
+
+
+def test_pack_missing_qty_box_invalid() -> None:
+    d = engine.decide(pack_ctx(qty_box=None))
+    assert d.kind == "INVALID_REQUEST"
+    assert d.code == "VALIDATION_ERROR"
+
+
+def test_pack_zero_qty_box_invalid() -> None:
+    d = engine.decide(pack_ctx(qty_box=0))
+    assert d.kind == "INVALID_REQUEST"
+
+
+def test_pack_excluded_from_dedup() -> None:
+    """§13.5 ⑮: PACK 은 연속 박스가 정상이므로 60 초 중복 규칙에서 제외된다."""
+    d = engine.decide(pack_ctx(recent_same_scan=True))
+    assert d.kind == "APPLY"
+
+
+def test_pack_wrong_station_rejected() -> None:
+    d = engine.decide(pack_ctx(station_process_code="P60"))
+    assert d.kind == "REJECT"
+    assert d.code == "STATE_CONFLICT"
+    assert "P50" in d.message
+
+
+def test_pack_target_unknown_stays_partial_without_remaining_hint() -> None:
+    steps = (
+        step(1, "P20", "DONE", qty_in=500, qty_good=500),
+        step(2, "P30", "DONE", qty_in=500, qty_good=480, qty_bad=20),
+        step(3, "P50", "WAITING", qty_in=None),
+        step(4, "P60", "WAITING"),
+    )
+    d = engine.decide(pack_ctx(steps=steps, qty_box=50))
+    assert d.step_updates[0].status == "PARTIAL"
+    assert "잔여" not in d.message
+
+
+def test_pack_prev_step_incomplete_pending() -> None:
+    steps = (
+        step(1, "P20", "DONE", qty_in=500, qty_good=500),
+        step(2, "P30", "STARTED", qty_in=500),
+        step(3, "P50", "WAITING"),
+        step(4, "P60", "WAITING"),
+    )
+    d = engine.decide(pack_ctx(steps=steps))
+    assert d.kind == "PENDING"
+    assert d.pending_reason == "PREV_INCOMPLETE"
+
+
+# ======================================================================
+# 18. SHIP (S3, api-contract §5.2 5-SHIP · §13.6 다박스)
+# ======================================================================
+def box(
+    code: str, *, wo_id: int = 1, so_id: int = 10, qty: int = 100, shipped: bool = False
+) -> engine.ShipBoxInfo:
+    return engine.ShipBoxInfo(code=code, wo_id=wo_id, so_id=so_id, qty=qty, already_shipped=shipped)
+
+
+def ship_ctx(**over: object) -> engine.ScanContext:
+    defaults: dict[str, object] = dict(
+        action="SHIP",
+        station_process_code="P60",
+        target_type="LT",
+        check_present=True,
+        check_valid=True,
+        input_via="HID",
+        vb_mapped_wo=False,
+        wo_found=True,
+        wo_status="PACKED",
+        steps=(),
+        ship_tracking_no="1234567890",
+        ship_boxes=(box("LT-260101-0001"),),
+        recent_same_scan=False,
+        late_arrival=False,
+    )
+    defaults.update(over)
+    return engine.ScanContext(**defaults)  # type: ignore[arg-type]
+
+
+def test_ship_single_box_ok() -> None:
+    d = engine.decide(ship_ctx())
+    assert d.kind == "APPLY"
+    assert d.result == "OK"
+    assert "박스 1건" in d.message
+
+
+def test_ship_missing_tracking_no_invalid() -> None:
+    d = engine.decide(ship_ctx(ship_tracking_no=None))
+    assert d.kind == "INVALID_REQUEST"
+    assert d.code == "VALIDATION_ERROR"
+
+
+def test_ship_dedup_hit_returns_noop() -> None:
+    d = engine.decide(ship_ctx(recent_same_scan=True))
+    assert d.kind == "NOOP"
+    assert d.result == "WARN"
+
+
+def test_ship_no_boxes_rejected() -> None:
+    d = engine.decide(ship_ctx(ship_boxes=()))
+    assert d.kind == "REJECT"
+    assert d.code == "BOX_NOT_FOUND"
+
+
+def test_ship_multi_box_same_so_ok() -> None:
+    boxes = (box("LT-260101-0001", so_id=10), box("LT-260101-0002", so_id=10, wo_id=2))
+    d = engine.decide(ship_ctx(ship_boxes=boxes))
+    assert d.kind == "APPLY"
+    assert "박스 2건" in d.message
+
+
+def test_ship_cross_so_mismatch_rejected() -> None:
+    boxes = (box("LT-260101-0001", so_id=10), box("LT-260101-0002", so_id=11))
+    d = engine.decide(ship_ctx(ship_boxes=boxes))
+    assert d.kind == "REJECT"
+    assert d.code == "BOX_SO_MISMATCH"
+
+
+def test_ship_already_shipped_rejected() -> None:
+    d = engine.decide(ship_ctx(ship_boxes=(box("LT-260101-0001", shipped=True),)))
+    assert d.kind == "REJECT"
+    assert d.code == "BOX_ALREADY_SHIPPED"
+    assert "LT-260101-0001" in d.message
+
+
+def test_ship_wo_wildcard_target_type_also_works() -> None:
+    """code=WO(와일드카드)도 target_type 은 엔진 판단에 영향이 없다 — box 목록만 본다."""
+    d = engine.decide(ship_ctx(target_type="WO"))
+    assert d.kind == "APPLY"
+
+
+def test_ship_late_arrival_upgrades_to_warn() -> None:
+    d = engine.decide(ship_ctx(late_arrival=True))
+    assert d.result == "WARN"
+    assert "지연 도착 — 순서 확인" in d.warnings
+
+
+# ======================================================================
+# 19. MAP (S3, api-contract §5.2 5-MAP)
+# ======================================================================
+def map_ctx(**over: object) -> engine.ScanContext:
+    defaults: dict[str, object] = dict(
+        action="MAP",
+        station_process_code="P20",
+        target_type="VB",
+        check_present=False,
+        check_valid=False,
+        input_via="HID",
+        vb_mapped_wo=False,
+        wo_found=False,
+        wo_status=None,
+        steps=(),
+        map_wo_code="WO-260101-0001",
+        map_wo_found=True,
+        recent_same_scan=False,
+        late_arrival=False,
+    )
+    defaults.update(over)
+    return engine.ScanContext(**defaults)  # type: ignore[arg-type]
+
+
+def test_map_new_mapping_ok() -> None:
+    d = engine.decide(map_ctx())
+    assert d.kind == "APPLY"
+    assert d.result == "OK"
+    assert "WO-260101-0001" in d.message
+
+
+def test_map_remap_to_different_wo_ok() -> None:
+    """리매핑도 엔진 관점에서는 같은 결정 로직 — 새 wo_code 로 매핑을 다시 만든다(서비스가 이전
+    active 매핑을 비활성화한다, §5.3 "2건 이상 active 는 만들지 않는다")."""
+    d = engine.decide(map_ctx(map_wo_code="WO-260101-0002"))
+    assert d.kind == "APPLY"
+    assert "WO-260101-0002" in d.message
+
+
+def test_map_missing_wo_code_invalid() -> None:
+    d = engine.decide(map_ctx(map_wo_code=None))
+    assert d.kind == "INVALID_REQUEST"
+    assert d.code == "VALIDATION_ERROR"
+
+
+def test_map_wo_not_found_rejected() -> None:
+    d = engine.decide(map_ctx(map_wo_found=False))
+    assert d.kind == "REJECT"
+    assert d.code == "WO_NOT_FOUND"
+
+
+def test_map_excluded_from_wo_validation_pipeline() -> None:
+    """MAP 은 (스캔한 코드가 VB 라도) _validate_wo 의 WO 상태 검사를 타지 않는다 — wo_found=False
+    라도 map_wo_found 만으로 판단한다."""
+    d = engine.decide(map_ctx(wo_found=False, wo_status=None, map_wo_found=True))
+    assert d.kind == "APPLY"

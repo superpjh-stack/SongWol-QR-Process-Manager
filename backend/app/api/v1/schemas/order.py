@@ -13,9 +13,9 @@ from app.api.v1.schemas.common import ApiModel, CodeStr, IdRef, KstDateTime, rea
 from app.api.v1.schemas.label_job import LabelJob as LabelJob
 from app.api.v1.schemas.label_job import LabelType as LabelType
 from app.api.v1.schemas.master import RoutingStepInput, UserSummary
-from app.api.v1.schemas.material import ReceiptSummary
+from app.api.v1.schemas.material import ReceiptSummary, VendorBarcodeMap
 from app.api.v1.schemas.scan import ScanEventSummary
-from app.api.v1.schemas.shipping import PackBoxSummary
+from app.api.v1.schemas.shipping import PackBoxSummary, ShipmentSummary
 
 SoStatus = Literal["OPEN", "IN_PROGRESS", "PARTIAL_SHIPPED", "SHIPPED", "CLOSED", "CANCELLED"]
 WoStatus = Literal[
@@ -248,6 +248,34 @@ class SalesOrderDetail(SalesOrder):
 class IssueWoResponse(ApiModel):
     work_orders: list[WorkOrder]
     pdf_url: str
+
+
+# ---- 분할 (B4-04, api-contract §7.3 · §13.4 shopfloor ⑱ [S3]) ----
+class SplitRequest(ApiModel):
+    qty: int = Field(gt=0)
+    reason: str = Field(min_length=1, max_length=200)
+    # STATION 호출 전용 (§13.4 shopfloor ⑱ · §14.1 「승인 PIN」 — /auth/worker 와 같은 verify_pin)
+    approver_card: str | None = None
+    pin: str | None = None
+
+
+class SplitResponse(ApiModel):
+    parent: WorkOrder
+    child: WorkOrder
+
+
+# ---- 출하 박스 상세 (ts-types §8 PackBoxDetail — WorkOrderSummary 참조 때문에 여기 둔다,
+# ---- shipping.py 는 order.py 를 임포트할 수 없다: order.py 가 이미 shipping.py 를 임포트한다) ----
+class PackBoxDetail(PackBoxSummary):
+    wo: WorkOrderSummary
+    worker: UserSummary
+    shipment: ShipmentSummary | None
+
+
+# ---- 협력업체 바코드 조회 (ts-types §7 VendorBarcodeLookup — WorkOrderSummary 참조) ----
+class VendorBarcodeLookup(ApiModel):
+    mapping: VendorBarcodeMap | None
+    wo: WorkOrderSummary | None
 
 
 class SoCancelResponse(ApiModel):

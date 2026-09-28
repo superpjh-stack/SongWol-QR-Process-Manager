@@ -15,8 +15,8 @@ from pydantic import Field
 from app.api.v1.schemas.common import ApiModel, CodeStr, IdRef, KstDateTime, LoginIdStr
 from app.api.v1.schemas.label_job import LabelJob
 from app.api.v1.schemas.master import UserSummary
-from app.api.v1.schemas.material import ReceiptSummary
-from app.api.v1.schemas.shipping import PackBoxSummary
+from app.api.v1.schemas.material import Receipt
+from app.api.v1.schemas.shipping import PackBoxSummary, ShipmentDetail
 
 LoginVia = Literal["CARD", "PIN", "OFFLINE_CACHE"]
 TargetType = Literal["SO", "WO", "LT", "US", "VB"]
@@ -172,11 +172,8 @@ class ScanResponse(ApiModel):
     label_job: LabelJob | None = None
     worker: UserSummary | None = None
     box: PackBoxSummary | None = None
-    # Receipt(ts-types §7)·ShipmentDetail(§8) 전체형은 S3 자재/출하 웨이브가 채운다 — S2 는
-    # RECEIVE/SHIP 을 구현하지 않으므로 이 필드들은 항상 None. 우선 가장 가까운 형(요약)으로
-    # 선언해 두고, S3 가 전체 응답형이 생기면 넓힌다.
-    receipt: ReceiptSummary | None = None
-    shipment: dict[str, Any] | None = None
+    receipt: Receipt | None = None  # RECEIVE 응답, lot 포함 (shopfloor ⑰)
+    shipment: ShipmentDetail | None = None  # so_remaining_qty 포함 (shopfloor ㉑)
 
 
 class ScanBatchRequest(ApiModel):

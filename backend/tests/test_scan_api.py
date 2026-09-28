@@ -1,9 +1,11 @@
-"""S2 스캔 API 통합 테스트 (api-contract §5, §7.6). ``/scan`` · ``/scan/batch`` ·
+"""S2/S3 스캔 API 통합 테스트 (api-contract §5, §7.6). ``/scan`` · ``/scan/batch`` ·
 ``/scan/{event_uuid}/approve`` · ``/scan/pending`` · ``/stations/{id}/queue`` ·
 ``/stations/{id}/equipment``.
 
 인증/권한 검사와, 실제 WO 발행 → 스캔 DONE(E1 승인 포함) → ``recalc`` 로 WO 상태 반영까지
-확인하는 end-to-end 흐름 1건을 포함한다.
+확인하는 end-to-end 흐름을 포함한다. S3: RECEIVE·PACK·SHIP·MAP 스캔 액션과, 발행 → RECEIVE →
+DONE → PACK → SHIP 전체 파이프라인(WO SHIPPED · SO SHIPPED · 재고 반영)을 확인하는 end-to-end
+흐름 1건을 더 포함한다.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from httpx import AsyncClient
 
 from app.core.checkcode import make_check
 from tests.conftest import ensure_station, ensure_user, headers_for, uniq
-from tests.helpers_order import API, issue_all, make_so, setup_master
+from tests.helpers_order import API, confirm_design, issue_all, make_so, setup_master, upload_design
 
 pytestmark = pytest.mark.asyncio
 
@@ -53,13 +55,32 @@ async def _issued_wo(
         ],
     )
     line_id = so["lines"][0]["id"]
-    from tests.helpers_order import confirm_design, upload_design
-
     await upload_design(client, admin_headers, so["id"], line_id)
     await confirm_design(client, admin_headers, so["id"], line_id)
     result = await issue_all(client, admin_headers, so["id"])
     wo = result["work_orders"][0]
     return m, wo
+
+
+async def _issued_wo_with_so(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """``_issued_wo`` 와 같지만 ``so`` 도 돌려준다(SO 상태·재고 확인용, S3 end-to-end)."""
+    m = await setup_master(client, admin_headers, routings=("SCREEN",))
+    so = await make_so(
+        client,
+        admin_headers,
+        m,
+        lines=[
+            {"item_id": m["item"]["id"], "print_method": "SCREEN", "qty": 500, "unit_price": 1000}
+        ],
+    )
+    line_id = so["lines"][0]["id"]
+    await upload_design(client, admin_headers, so["id"], line_id)
+    await confirm_design(client, admin_headers, so["id"], line_id)
+    result = await issue_all(client, admin_headers, so["id"])
+    wo = result["work_orders"][0]
+    return m, so, wo
 
 
 async def _setup_p30_station_and_equipment(
@@ -153,10 +174,12 @@ async def test_scan_login_action_rejected(
 async def test_scan_out_of_scope_action_rejected(
     admin_headers: dict[str, str], client: AsyncClient
 ) -> None:
+    """S3 부터 RECEIVE/PACK/SHIP/MAP 은 실제로 구현됐다 — 여전히 범위 밖인 액션(CANCEL·REPRINT,
+    S4 예정, engine.OUT_OF_SCOPE_ACTIONS)으로 검사한다."""
     station_id, api_key, _eq = await _setup_p30_station_and_equipment(client, admin_headers)
     worker = await _worker_card()
     body = scan_body(
-        station_id=station_id, worker_card=worker, code="WO-261001-0001", action="RECEIVE"
+        station_id=station_id, worker_card=worker, code="WO-261001-0001", action="CANCEL"
     )
     res = await client.post(f"{API}/scan", headers={"X-Station-Key": api_key}, json=body)
     assert res.status_code == 200
@@ -550,3 +573,376 @@ async def test_e3_route_insert_approve_shifts_two_steps_without_duplicate_code(
     assert steps_by_code["P30"]["qty_good"] == 30
     assert steps_by_code["P50"]["status"] == "WAITING"
     assert steps_by_code["P60"]["status"] == "WAITING"
+
+
+# ======================================================================
+# S3: RECEIVE (api-contract §5.2 5-RECEIVE · §6.3)
+# ======================================================================
+async def test_scan_receive_partial_then_full_and_fail_quarantines(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    p20_station, p20_key = await ensure_station(
+        uniq("T-K-P20-"), type_="KIOSK", process_code="P20"
+    )
+    worker = await _worker_card()
+    _m, wo = await _issued_wo(client, admin_headers)
+    wo_code = wo["code"]
+
+    body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo_code,
+        action="RECEIVE",
+        qty_good=100,
+        extra={"inspection": "PASS"},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "WARN" and "부족" in data["message"]
+    assert data["receipt"]["wo_receipt_status"] == "PARTIAL"
+
+    res = await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)
+    assert res.json()["receipt_status"] == "PARTIAL"
+
+    body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo_code,
+        action="RECEIVE",
+        qty_good=390,
+        extra={"inspection": "PASS"},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "OK"
+    assert data["receipt"]["wo_receipt_status"] == "FULL"
+
+    detail = (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()
+    assert detail["receipt_status"] == "FULL" and detail["qty_received"] == 490
+    steps_by_code = {s["process_code"]: s for s in detail["steps"]}
+    assert steps_by_code["P20"]["status"] == "DONE"
+    assert steps_by_code["P30"]["qty_in"] == 490
+
+    # 검수 불합격 → LOT 격리, 누계에서 제외(다른 WO)
+    _m2, wo2 = await _issued_wo(client, admin_headers)
+    body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo2["code"],
+        action="RECEIVE",
+        qty_good=50,
+        extra={"inspection": "FAIL"},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "WARN" and "격리" in data["message"]
+    assert data["receipt"]["lot"]["status"] == "QUARANTINE"
+    detail2 = (await client.get(f"{API}/wo/{wo2['code']}", headers=admin_headers)).json()
+    assert detail2["qty_received"] == 0
+
+
+# ======================================================================
+# S3: PACK/SHIP/MAP 공통 파이프라인 헬퍼
+# ======================================================================
+async def _wo_ready_for_pack(client: AsyncClient, admin_headers: dict[str, str]) -> tuple[str, str]:
+    """발행 → RECEIVE(P20 FULL) → DONE(P30) 까지 스캔으로 밀어 둔다. (wo_code, worker_card)."""
+    p30_station, p30_key, eq_code = await _setup_p30_station_and_equipment(client, admin_headers)
+    worker = await _worker_card()
+    _m, wo = await _issued_wo(client, admin_headers)
+    wo_code = wo["code"]
+
+    p20_station, p20_key = await ensure_station(
+        uniq("T-K-P20-"), type_="KIOSK", process_code="P20"
+    )
+    body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo_code,
+        action="RECEIVE",
+        qty_good=500,
+        extra={"inspection": "PASS"},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=body)
+    assert res.status_code == 200 and res.json()["result"] == "OK", res.text
+
+    body = scan_body(
+        station_id=p30_station,
+        worker_card=worker,
+        code=wo_code,
+        action="DONE",
+        equipment_code=eq_code,
+        qty_good=500,
+        qty_bad=0,
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p30_key}, json=body)
+    assert res.status_code == 200 and res.json()["result"] == "OK", res.text
+    return wo_code, worker
+
+
+async def _wo_packed(client: AsyncClient, admin_headers: dict[str, str]) -> tuple[str, str, str]:
+    """``_wo_ready_for_pack`` 뒤 단일 박스로 PACK 까지. (wo_code, worker_card, box_code)."""
+    wo_code, worker = await _wo_ready_for_pack(client, admin_headers)
+    p50_station, p50_key = await ensure_station(
+        uniq("T-K-P50-"), type_="KIOSK", process_code="P50"
+    )
+    body = scan_body(
+        station_id=p50_station, worker_card=worker, code=wo_code, action="PACK", qty_box=500
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p50_key}, json=body)
+    assert res.status_code == 200, res.text
+    return wo_code, worker, res.json()["box"]["code"]
+
+
+# ======================================================================
+# S3: PACK (api-contract §5.2 5-PACK · §13.7)
+# ======================================================================
+async def test_scan_pack_no_printer_warns_and_reaches_wo_packed(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    """프린터 미설정(§13.7 프린터 선택 순서): 박스는 항상 커밋되지만 result=WARN,
+    label_job.zpl_sent=false, label_job.error=NO_PRINTER, warnings 에 안내 문구."""
+    wo_code, worker = await _wo_ready_for_pack(client, admin_headers)
+    p50_station, p50_key = await ensure_station(
+        uniq("T-K-P50-"), type_="KIOSK", process_code="P50"
+    )
+    body = scan_body(
+        station_id=p50_station,
+        worker_card=worker,
+        code=wo_code,
+        action="PACK",
+        qty_box=500,
+        client_seq=7,
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p50_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "WARN"
+    assert data["warnings"] and "프린터" in data["warnings"][0]
+    assert data["label_job"]["zpl_sent"] is False
+    assert data["label_job"]["error"] == "NO_PRINTER"
+    assert data["box"]["qty"] == 500 and data["box"]["box_no"] == 1
+
+    detail = (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()
+    assert detail["status"] == "PACKED"
+
+
+# ======================================================================
+# S3: SHIP (api-contract §5.2 5-SHIP · §13.6 다박스)
+# ======================================================================
+async def test_scan_ship_single_box_confirms_wo_and_so(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    wo_code, worker, box_code = await _wo_packed(client, admin_headers)
+    p60_station, p60_key = await ensure_station(
+        uniq("T-K-P60-"), type_="KIOSK", process_code="P60"
+    )
+    body = scan_body(
+        station_id=p60_station,
+        worker_card=worker,
+        code=box_code,
+        action="SHIP",
+        extra={"tracking_no": uniq("TRK")},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p60_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "OK"
+    assert data["shipment"]["status"] == "SHIPPED" and data["shipment"]["qty_total"] == 500
+    assert data["remaining_qty"] == 0  # ㉑: SHIP 응답의 remaining_qty 는 SO 잔량
+
+    detail = (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()
+    assert detail["status"] == "SHIPPED" and detail["qty_shipped"] == 500
+
+
+async def test_scan_ship_wo_wildcard_picks_all_unshipped_boxes(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    """§11-15: code=WO 이면 그 WO 의 미발송 박스 전부를 싣는다."""
+    wo_code, worker = await _wo_ready_for_pack(client, admin_headers)
+    p50_station, p50_key = await ensure_station(
+        uniq("T-K-P50-"), type_="KIOSK", process_code="P50"
+    )
+    for qty_box in (300, 200):
+        body = scan_body(
+            station_id=p50_station,
+            worker_card=worker,
+            code=wo_code,
+            action="PACK",
+            qty_box=qty_box,
+        )
+        res = await client.post(f"{API}/scan", headers={"X-Station-Key": p50_key}, json=body)
+        assert res.status_code == 200, res.text
+    assert (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()[
+        "status"
+    ] == "PACKED"
+
+    p60_station, p60_key = await ensure_station(
+        uniq("T-K-P60-"), type_="KIOSK", process_code="P60"
+    )
+    body = scan_body(
+        station_id=p60_station,
+        worker_card=worker,
+        code=wo_code,
+        action="SHIP",
+        extra={"tracking_no": uniq("TRK")},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p60_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "OK"
+    assert data["shipment"]["qty_total"] == 500
+    assert len(data["shipment"]["boxes"]) == 2
+
+
+async def test_scan_ship_cross_so_mismatch_rejected(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    wo1_code, worker, box1 = await _wo_packed(client, admin_headers)
+    _wo2_code, _worker2, box2 = await _wo_packed(client, admin_headers)
+    p60_station, p60_key = await ensure_station(
+        uniq("T-K-P60-"), type_="KIOSK", process_code="P60"
+    )
+    body = scan_body(
+        station_id=p60_station,
+        worker_card=worker,
+        code=box1,
+        action="SHIP",
+        extra={"tracking_no": uniq("TRK"), "box_codes": [box2]},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p60_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "REJECT" and data["code"] == "BOX_SO_MISMATCH"
+
+
+# ======================================================================
+# S3: MAP (api-contract §5.2 5-MAP)
+# ======================================================================
+async def test_scan_map_new_and_remap(admin_headers: dict[str, str], client: AsyncClient) -> None:
+    station_id, api_key = await ensure_station(
+        uniq("T-K-P20-"), type_="KIOSK", process_code="P20"
+    )
+    worker = await _worker_card()
+    _m1, wo1 = await _issued_wo(client, admin_headers)
+    _m2, wo2 = await _issued_wo(client, admin_headers)
+    vb = uniq("VB")
+
+    body = scan_body(
+        station_id=station_id,
+        worker_card=worker,
+        code=vb,
+        action="MAP",
+        extra={"wo_code": wo1["code"]},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": api_key}, json=body)
+    assert res.status_code == 200, res.text
+    assert res.json()["result"] == "OK"
+
+    lookup = await client.get(f"{API}/vendor-barcodes/{vb}", headers=admin_headers)
+    assert lookup.json()["wo"]["code"] == wo1["code"]
+
+    body = scan_body(
+        station_id=station_id,
+        worker_card=worker,
+        code=vb,
+        action="MAP",
+        extra={"wo_code": wo2["code"]},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": api_key}, json=body)
+    assert res.status_code == 200, res.text
+    assert res.json()["result"] == "OK"
+
+    lookup = await client.get(f"{API}/vendor-barcodes/{vb}", headers=admin_headers)
+    assert lookup.json()["wo"]["code"] == wo2["code"]
+
+
+# ======================================================================
+# S3: end-to-end — 발행 → RECEIVE → DONE(P30) → PACK → SHIP
+# ======================================================================
+async def test_e2e_receive_pack_ship_confirms_wo_so_and_stock(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    _m, so, wo = await _issued_wo_with_so(client, admin_headers)
+    wo_code = wo["code"]
+
+    p20_station, p20_key = await ensure_station(
+        uniq("T-K-P20-"), type_="KIOSK", process_code="P20"
+    )
+    p30_station, p30_key, eq_code = await _setup_p30_station_and_equipment(client, admin_headers)
+    p50_station, p50_key = await ensure_station(
+        uniq("T-K-P50-"), type_="KIOSK", process_code="P50"
+    )
+    p60_station, p60_key = await ensure_station(
+        uniq("T-K-P60-"), type_="KIOSK", process_code="P60"
+    )
+    worker = await _worker_card()
+
+    # RECEIVE
+    body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo_code,
+        action="RECEIVE",
+        qty_good=500,
+        extra={"inspection": "PASS"},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=body)
+    assert res.status_code == 200 and res.json()["result"] == "OK", res.text
+
+    stock = (
+        await client.get(f"{API}/stock", headers=admin_headers, params={"q": _m["item"]["code"]})
+    ).json()["items"][0]
+    assert stock["qty_on_hand"] == 500
+
+    # DONE (P30, 허용오차 이내)
+    body = scan_body(
+        station_id=p30_station,
+        worker_card=worker,
+        code=wo_code,
+        action="DONE",
+        equipment_code=eq_code,
+        qty_good=500,
+        qty_bad=0,
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p30_key}, json=body)
+    assert res.status_code == 200 and res.json()["result"] == "OK", res.text
+
+    # PACK
+    body = scan_body(
+        station_id=p50_station, worker_card=worker, code=wo_code, action="PACK", qty_box=500
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p50_key}, json=body)
+    assert res.status_code == 200, res.text
+    box_code = res.json()["box"]["code"]
+    assert (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()[
+        "status"
+    ] == "PACKED"
+
+    # SHIP
+    body = scan_body(
+        station_id=p60_station,
+        worker_card=worker,
+        code=box_code,
+        action="SHIP",
+        extra={"tracking_no": uniq("TRK")},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p60_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "OK"
+    assert data["shipment"]["status"] == "SHIPPED"
+    assert data["remaining_qty"] == 0
+
+    wo_detail = (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()
+    assert wo_detail["status"] == "SHIPPED" and wo_detail["qty_shipped"] == 500
+
+    so_detail = (await client.get(f"{API}/so/{so['id']}", headers=admin_headers)).json()
+    assert so_detail["status"] == "SHIPPED"
+
+    stock = (
+        await client.get(f"{API}/stock", headers=admin_headers, params={"q": _m["item"]["code"]})
+    ).json()["items"][0]
+    assert stock["qty_on_hand"] == 0

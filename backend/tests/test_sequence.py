@@ -35,6 +35,18 @@ async def _last_no(prefix: str, seq_date: date) -> int | None:
         ).scalar_one_or_none()
 
 
+async def _restore(prefix: str, seq_date: date, last_no: int | None) -> None:
+    async with SessionLocal() as s:
+        await s.execute(
+            delete(CodeSequence).where(
+                CodeSequence.prefix == prefix, CodeSequence.seq_date == seq_date
+            )
+        )
+        if last_no is not None:
+            s.add(CodeSequence(prefix=prefix, seq_date=seq_date, last_no=last_no))
+        await s.commit()
+
+
 @pytest.mark.asyncio
 async def test_concurrent_100_codes_no_duplicates() -> None:
     """100 코루틴이 각각 별도 세션·트랜잭션으로 채번 → 중복 0, 1~100 연속."""
@@ -88,13 +100,20 @@ async def test_expands_to_five_digits_after_9999() -> None:
 
 @pytest.mark.asyncio
 async def test_us_prefix_ignores_date() -> None:
+    """``US`` 시퀀스는 ``app_user.card_code`` 로 전 스위트가 공유한다(``US_SEQ_DATE`` 고정 행) —
+    0 으로 리셋했다가 원래 값으로 복원한다. 안 그러면 이 테스트 뒤에 실행되는 다른 테스트의
+    카드 발급이 이미 쓰인 낮은 번호와 충돌한다(전체 스위트 실행 시에만 드러나는 순서 의존 결함)."""
+    original = await _last_no("US", US_SEQ_DATE)
     await _reset("US", US_SEQ_DATE)
-    async with SessionLocal() as s:
-        async with s.begin():
-            a = await next_code(s, "US", now=FIXED_NOW)
-            b = await next_code(s, "US", now=datetime(2030, 6, 1, tzinfo=UTC))
-    assert (a, b) == ("US-0001", "US-0002")
-    assert await _last_no("US", US_SEQ_DATE) == 2
+    try:
+        async with SessionLocal() as s:
+            async with s.begin():
+                a = await next_code(s, "US", now=FIXED_NOW)
+                b = await next_code(s, "US", now=datetime(2030, 6, 1, tzinfo=UTC))
+        assert (a, b) == ("US-0001", "US-0002")
+        assert await _last_no("US", US_SEQ_DATE) == 2
+    finally:
+        await _restore("US", US_SEQ_DATE, original)
 
 
 def test_split_code_suffixes() -> None:

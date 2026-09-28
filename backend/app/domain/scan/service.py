@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -22,22 +23,31 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal
+from app.api.v1.schemas import label as LabelS
+from app.api.v1.schemas import material as MatS
 from app.api.v1.schemas import order as O
 from app.api.v1.schemas import scan as S
+from app.api.v1.schemas import shipping as ShipS
+from app.api.v1.schemas.common import IdRef
 from app.core.checkcode import classify, verify_check
-from app.core.errors import ApiError, state_conflict, validation
+from app.core.errors import ApiError, not_found, state_conflict, validation
+from app.core.sequence import next_code
 from app.db.models.master import AppUser, Customer, Equipment, Item, PrintMethod, Process, Station
-from app.db.models.material import VendorBarcodeMap
+from app.db.models.material import InboundLot, MaterialReceipt, Stock, StockTxn, VendorBarcodeMap
 from app.db.models.ops import AuditLog
 from app.db.models.order import Design, SalesOrder, StepWork, WorkOrder, WoRouteStep
 from app.db.models.scan import ScanEvent, ScanEventKey
-from app.domain.auth.service import verify_pin
+from app.db.models.shipping import PackBox, Shipment, ShipmentBox
+from app.domain.auth.service import resolve_manager_approver
+from app.domain.label import service as label_service
 from app.domain.master.admin_service import user_summary
 from app.domain.order import recalc
 from app.domain.order.views import load_wo_views, process_names, wo_summary
 from app.domain.scan import engine
 
 DEDUP_WINDOW_SECONDS = 60
+# CANCEL·REPRINT 는 아직 WO 컨텍스트를 만들지 않는다(S4). MAP 은 스캔한 코드 자체가 매핑 대상
+# 업체 바코드라 vendor_barcode_map 조회로 WO 를 미리 해석하면 안 된다(그게 MAP 의 목적이다).
 SKIP_WO_ACTIONS = frozenset({"LOGIN", "MAP"}) | engine.OUT_OF_SCOPE_ACTIONS
 
 
@@ -54,6 +64,18 @@ async def _resolve_worker(session: AsyncSession, worker_card: str) -> AppUser:
     if not user.active:
         raise ApiError(403, "USER_INACTIVE", "비활성 사용자입니다")
     return user
+
+
+async def resolve_worker_for_write(
+    session: AsyncSession, principal: Principal, worker_card: str | None
+) -> AppUser:
+    """REST 쓰기 경로 공통(§7.4/§7.5): ``worker_card`` 있으면 카드로, 없으면 JWT 사용자로 작성자를
+    정한다. ``material``·``shipping`` 서비스가 공유한다(중복 금지)."""
+    if worker_card:
+        return await _resolve_worker(session, worker_card)
+    if principal.user is not None:
+        return principal.user
+    raise validation(["body", "worker_card"], "worker_card 가 필요합니다")
 
 
 async def _find_wo_by_code(session: AsyncSession, code: str) -> WorkOrder | None:
@@ -82,6 +104,144 @@ async def _find_equipment(session: AsyncSession, code: str) -> Equipment | None:
     return (
         await session.execute(select(Equipment).where(Equipment.code == norm))
     ).scalar_one_or_none()
+
+
+async def get_wo_by_code_or_404(session: AsyncSession, code: str) -> WorkOrder:
+    """REST 경로(``/receipts`` · ``/boxes`` · ``/vendor-barcodes/map``)가 쓰는 공개 헬퍼."""
+    wo = await _find_wo_by_code(session, code)
+    if wo is None:
+        raise not_found("WO_NOT_FOUND", "작업지시", code)
+    return wo
+
+
+async def _find_box_by_code(session: AsyncSession, code: str) -> PackBox | None:
+    norm = code.strip().upper()
+    return (await session.execute(select(PackBox).where(PackBox.code == norm))).scalar_one_or_none()
+
+
+async def get_box_by_code_or_404(session: AsyncSession, code: str) -> PackBox:
+    box = await _find_box_by_code(session, code)
+    if box is None:
+        raise not_found("BOX_NOT_FOUND", "박스", code)
+    return box
+
+
+async def _next_box_no(session: AsyncSession, wo_id: int) -> int:
+    n = (
+        await session.execute(select(func.count()).where(PackBox.wo_id == wo_id))
+    ).scalar_one()
+    return int(n) + 1
+
+
+async def add_stock_txn(
+    session: AsyncSession,
+    item_id: int,
+    qty_delta: int,
+    *,
+    txn_type: str,
+    ref_type: str | None,
+    ref_id: int | None,
+    created_by: int | None,
+    reason: str | None = None,
+    source: str = "NEW",
+) -> StockTxn:
+    """공통 재고 반영 (db-schema §5.4/§5.5). RECEIVE(+)·SHIP(-)·ADJUST(±)·REWORK 가 공유한다."""
+    stock = await session.get(Stock, item_id)
+    if stock is None:
+        stock = Stock(item_id=item_id, qty_on_hand=0)
+        session.add(stock)
+        await session.flush()
+    stock.qty_on_hand = stock.qty_on_hand + qty_delta
+    txn = StockTxn(
+        item_id=item_id,
+        txn_type=txn_type,
+        qty=qty_delta,
+        ref_type=ref_type,
+        ref_id=ref_id,
+        reason=reason,
+        source=source,
+        created_by=created_by,
+    )
+    session.add(txn)
+    await session.flush()
+    return txn
+
+
+async def resolve_ship_boxes(
+    session: AsyncSession,
+    *,
+    code: str,
+    target_type: str,
+    box_codes: list[str] | None,
+) -> list[PackBox]:
+    """SHIP 후보 박스 조회 (§5.2 5-SHIP, §13.6). 코드 중 하나라도 못 찾으면 **빈 목록**을 돌려줘
+    ``dispatch_ship`` 이 ``BOX_NOT_FOUND`` 로 명확히 반려하게 한다(부분 무시 금지).
+
+    - ``target_type == "LT"``: 스캔한 박스 + ``box_codes`` 로 추가한 박스(§13.6 ①)
+    - ``target_type == "WO"``: ``box_codes`` 가 있으면 그 박스들만, 없으면 그 WO 의 미발송
+      박스 전부(§11-15)
+    """
+    boxes: dict[int, PackBox] = {}
+    if target_type == "LT":
+        primary = await _find_box_by_code(session, code)
+        if primary is None:
+            return []
+        boxes[primary.id] = primary
+        for c in box_codes or ():
+            b = await _find_box_by_code(session, c)
+            if b is None:
+                return []
+            boxes[b.id] = b
+        return list(boxes.values())
+    if target_type == "WO":
+        wo = await _find_wo_by_code(session, code)
+        if wo is None:
+            return []
+        if box_codes:
+            for c in box_codes:
+                b = await _find_box_by_code(session, c)
+                if b is None:
+                    return []
+                boxes[b.id] = b
+            return list(boxes.values())
+        rows = (
+            (
+                await session.execute(
+                    select(PackBox).where(
+                        PackBox.wo_id == wo.id, PackBox.shipment_id.is_(None)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return list(rows)
+    return []
+
+
+async def _ship_box_infos(
+    session: AsyncSession, boxes: list[PackBox]
+) -> tuple[engine.ShipBoxInfo, ...]:
+    """§13.6: 후보 박스마다 SO 를 찾아 엔진 스냅샷으로 바꾼다 (엔진은 DB 를 만지지 않는다)."""
+    so_by_wo: dict[int, int] = {}
+    infos: list[engine.ShipBoxInfo] = []
+    for b in boxes:
+        so_id = so_by_wo.get(b.wo_id)
+        if so_id is None:
+            w = await session.get(WorkOrder, b.wo_id)
+            assert w is not None
+            so_id = w.so_id
+            so_by_wo[b.wo_id] = so_id
+        infos.append(
+            engine.ShipBoxInfo(
+                code=b.code,
+                wo_id=b.wo_id,
+                so_id=so_id,
+                qty=b.qty,
+                already_shipped=b.shipment_id is not None,
+            )
+        )
+    return tuple(infos)
 
 
 async def _load_steps(session: AsyncSession, wo_id: int) -> list[WoRouteStep]:
@@ -127,6 +287,49 @@ async def _late_arrival(session: AsyncSession, wo_id: int, scanned_at: datetime)
     )
     last = (await session.execute(stmt)).scalar_one_or_none()
     return last is not None and scanned_at < last
+
+
+async def _recent_same_receive(
+    session: AsyncSession, wo_id: int, qty: int, qty_box: int | None, now: datetime
+) -> bool:
+    """§13.5 ⑮: RECEIVE 는 같은 WO 에 같은 qty·box_count 일 때만 60 초 중복으로 본다."""
+    window_start = now - timedelta(seconds=DEDUP_WINDOW_SECONDS)
+    stmt = select(ScanEvent.event_uuid).where(
+        ScanEvent.wo_id == wo_id,
+        ScanEvent.action == "RECEIVE",
+        ScanEvent.result.in_(("OK", "WARN")),
+        ScanEvent.qty_good == qty,
+        ScanEvent.qty_box.is_(qty_box) if qty_box is None else ScanEvent.qty_box == qty_box,
+        ScanEvent.received_at >= window_start,
+        ScanEvent.received_at <= now,
+    )
+    return (await session.execute(stmt)).first() is not None
+
+
+async def _recent_same_ship(
+    session: AsyncSession, tracking_no: str, box_codes: frozenset[str], now: datetime
+) -> bool:
+    """§13.5 ⑮: SHIP 은 같은 tracking_no 에 같은 박스 집합일 때만 60 초 중복으로 본다."""
+    window_start = now - timedelta(seconds=DEDUP_WINDOW_SECONDS)
+    stmt = (
+        select(ScanEvent.payload)
+        .where(
+            ScanEvent.action == "SHIP",
+            ScanEvent.result.in_(("OK", "WARN")),
+            ScanEvent.received_at >= window_start,
+            ScanEvent.received_at <= now,
+        )
+        .order_by(ScanEvent.received_at.desc())
+    )
+    for (payload,) in (await session.execute(stmt)).all():
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("tracking_no") != tracking_no:
+            continue
+        codes = payload.get("_ship_box_codes")
+        if isinstance(codes, list) and frozenset(codes) == box_codes:
+            return True
+    return False
 
 
 def _step_snapshots(
@@ -298,6 +501,10 @@ async def _build_response(
     duplicate: bool,
     worker: AppUser | None,
     station_process_code: str | None,
+    receipt: MatS.Receipt | None = None,
+    box: ShipS.PackBox | None = None,
+    label_job: LabelS.LabelJob | None = None,
+    shipment: ShipS.ShipmentDetail | None = None,
 ) -> S.ScanResponse:
     wo_sum = await _scan_wo_summary(session, wo.id) if wo is not None else None
 
@@ -327,6 +534,9 @@ async def _build_response(
             remaining_qty = max(
                 (cur_orm.qty_in or 0) - ((cur_orm.qty_good or 0) + (cur_orm.qty_bad or 0)), 0
             )
+    if shipment is not None:
+        # shopfloor ㉑: SHIP 응답의 remaining_qty 는 단계 잔량이 아니라 SO 잔량이다.
+        remaining_qty = shipment.so_remaining_qty
 
     return S.ScanResponse(
         result=decision.result,
@@ -342,6 +552,567 @@ async def _build_response(
         duplicate=duplicate,
         code=decision.code,
         worker=user_summary(worker) if worker is not None else None,
+        receipt=receipt,
+        box=box,
+        label_job=label_job,
+        shipment=shipment,
+    )
+
+
+# ======================================================================
+# RECEIVE (A3-01/A3-03, api-contract §5.2 5-RECEIVE · §6.3) — 스캔·REST(`/receipts`) 공유
+# ======================================================================
+async def decide_receive(
+    session: AsyncSession,
+    *,
+    wo: WorkOrder,
+    qty: int,
+    inspection: str,
+    variance_reason: str | None,
+    recent_same_scan: bool,
+    late_arrival: bool = False,
+    target_type: str = "WO",
+    check_present: bool = True,
+    check_valid: bool = True,
+    input_via: str = "HID",
+    vb_mapped_wo: bool = False,
+) -> tuple[engine.Decision, list[WoRouteStep]]:
+    """REST(`POST /receipts`) 는 station_process_code 없이 P20 고정으로 부른다(§7.4 "스캔
+    RECEIVE 와 같은 서비스"). 스캔 경로(handle_scan)도 이 함수를 그대로 쓴다."""
+    steps = await _load_steps(session, wo.id)
+    names = await process_names(session)
+    ctx = engine.ScanContext(
+        action="RECEIVE",
+        station_process_code="P20",
+        target_type=target_type,
+        check_present=check_present,
+        check_valid=check_valid,
+        input_via=input_via,
+        vb_mapped_wo=vb_mapped_wo,
+        wo_found=True,
+        wo_status=wo.status,
+        steps=_step_snapshots(steps, names),
+        qty_good=qty,
+        inspection=inspection,
+        variance_reason=variance_reason,
+        recent_same_scan=recent_same_scan,
+        late_arrival=late_arrival,
+    )
+    return engine.decide(ctx), steps
+
+
+async def apply_receive(
+    session: AsyncSession,
+    *,
+    decision: engine.Decision,
+    wo: WorkOrder,
+    steps: list[WoRouteStep],
+    item: Item,
+    qty: int,
+    box_count: int | None,
+    inspection: str,
+    vendor: str | None,
+    vendor_barcode: str | None,
+    received_at: datetime,
+    worker: AppUser | None,
+    station: Station | None,
+    event_uuid: uuid.UUID | None,
+) -> tuple[InboundLot, MaterialReceipt]:
+    """``decision.kind == "APPLY"`` 일 때만 부른다. lot·receipt·stock_txn 생성 + P20 단계 갱신 +
+    WO.qty_received/receipt_status 갱신 + recalc. 커밋은 호출자 몫(§13.7 원칙과 동일하게 두
+    엔트리포인트가 각자의 트랜잭션 경계를 결정한다)."""
+    lot = InboundLot(
+        code=await next_code(session, "LT", received_at),
+        item_id=item.id,
+        vendor=vendor,
+        received_at=received_at,
+        qty=qty,
+        status="QUARANTINE" if inspection == "FAIL" else "OK",
+    )
+    session.add(lot)
+    await session.flush()
+    receipt = MaterialReceipt(
+        wo_id=wo.id,
+        item_id=item.id,
+        lot_id=lot.id,
+        qty=qty,
+        box_count=box_count,
+        inspection=inspection,
+        received_at=received_at,
+        worker_id=worker.id if worker else None,
+        station_id=station.id if station else None,
+        vendor_barcode=vendor_barcode,
+        event_uuid=event_uuid,
+    )
+    session.add(receipt)
+    await session.flush()
+    if inspection != "FAIL":
+        await add_stock_txn(
+            session,
+            item.id,
+            qty,
+            txn_type="RECEIVE",
+            ref_type="material_receipt",
+            ref_id=receipt.id,
+            created_by=worker.id if worker else None,
+        )
+    steps_by_seq = {s.seq: s for s in steps}
+    await _apply_updates(
+        session,
+        steps_by_seq,
+        decision.step_updates,
+        worker_id=worker.id if worker else None,
+        equipment_id=None,
+        approver_id=None,
+        now=received_at,
+    )
+    p20 = steps_by_seq[decision.step_updates[0].seq]
+    wo.qty_received = p20.qty_good or 0
+    if decision.receipt_status is not None:
+        wo.receipt_status = decision.receipt_status
+    # shopfloor ⑧: "RECEIVE 커밋마다" 다음 단계 qty_in = qty_received — _apply_updates 의
+    # _propagate_qty_in 은 "비어 있을 때만" 채우므로(단계가 보통 한 번만 완료되는 다른 액션엔
+    # 맞다) RECEIVE 의 부분입고 누적(여러 커밋)에는 맞지 않는다. 여기서 항상 덮어쓴다.
+    nxt = next((s for s in sorted(steps, key=lambda x: x.seq) if s.seq > p20.seq), None)
+    if nxt is not None:
+        nxt.qty_in = wo.qty_received
+    so = await session.get(SalesOrder, wo.so_id)
+    recalc.recalc_wo(wo, steps)
+    if so is not None:
+        await recalc.recalc_so(session, so)
+    return lot, receipt
+
+
+def receipt_out(
+    receipt: MaterialReceipt,
+    lot: InboundLot,
+    item: Item,
+    worker: AppUser,
+    wo: WorkOrder | None,
+) -> MatS.Receipt:
+    item_ref = IdRef(id=item.id, code=item.code, name=item.name)
+    remaining = (wo.qty_ordered - wo.qty_received) if wo is not None else None
+    return MatS.Receipt(
+        id=receipt.id,
+        wo_code=wo.code if wo is not None else None,
+        item=item_ref,
+        lot_code=lot.code,
+        qty=receipt.qty,
+        box_count=receipt.box_count,
+        inspection=receipt.inspection,
+        received_at=receipt.received_at,
+        worker=user_summary(worker),
+        lot=MatS.InboundLot(
+            id=lot.id,
+            code=lot.code,
+            item=item_ref,
+            vendor=lot.vendor,
+            received_at=lot.received_at,
+            qty=lot.qty,
+            status=lot.status,
+            quarantine_memo=lot.quarantine_memo,
+        ),
+        wo_receipt_status=wo.receipt_status if wo is not None else None,
+        remaining_qty=remaining,
+        vendor_barcode=receipt.vendor_barcode,
+    )
+
+
+# ======================================================================
+# PACK (A4-01, api-contract §5.2 5-PACK) — 스캔·REST(`/boxes`) 공유
+# ======================================================================
+async def decide_pack(
+    session: AsyncSession,
+    *,
+    wo: WorkOrder,
+    qty_box: int,
+    recent_same_scan: bool = False,
+    late_arrival: bool = False,
+) -> tuple[engine.Decision, list[WoRouteStep]]:
+    steps = await _load_steps(session, wo.id)
+    names = await process_names(session)
+    ctx = engine.ScanContext(
+        action="PACK",
+        station_process_code="P50",
+        target_type="WO",
+        check_present=True,
+        check_valid=True,
+        input_via="HID",
+        vb_mapped_wo=False,
+        wo_found=True,
+        wo_status=wo.status,
+        steps=_step_snapshots(steps, names),
+        qty_box=qty_box,
+        recent_same_scan=recent_same_scan,
+        late_arrival=late_arrival,
+    )
+    return engine.decide(ctx), steps
+
+
+async def apply_pack(
+    session: AsyncSession,
+    *,
+    decision: engine.Decision,
+    wo: WorkOrder,
+    steps: list[WoRouteStep],
+    qty_box: int,
+    printer_id: str | None,
+    worker: AppUser | None,
+    station: Station | None,
+    event_uuid: uuid.UUID | None,
+    client_seq: int | None,
+) -> tuple[PackBox, LabelS.LabelJob]:
+    """박스 생성은 항상 커밋된다(§13.7 ⑭) — ``label_service.print_label`` 이 내부에서 커밋하므로
+    이 함수는 커밋 경계를 호출자와 공유하지 않는다(REST·스캔 모두 이 함수 호출 시점에 박스가
+    이미 저장된다)."""
+    steps_by_seq = {s.seq: s for s in steps}
+    now = datetime.now(UTC)
+    await _apply_updates(
+        session,
+        steps_by_seq,
+        decision.step_updates,
+        worker_id=worker.id if worker else None,
+        equipment_id=None,
+        approver_id=None,
+        now=now,
+    )
+    p50 = steps_by_seq[decision.step_updates[0].seq]
+    wo.qty_packed = p50.qty_good or 0
+    so = await session.get(SalesOrder, wo.so_id)
+    recalc.recalc_wo(wo, steps)
+    if so is not None:
+        await recalc.recalc_so(session, so)
+    box_no = await _next_box_no(session, wo.id)
+    box = PackBox(
+        code=await next_code(session, "LT", now),
+        wo_id=wo.id,
+        box_no=box_no,
+        qty=qty_box,
+        packed_at=now,
+        worker_id=worker.id if worker else None,
+        station_id=station.id if station else None,
+        event_uuid=event_uuid,
+    )
+    session.add(box)
+    await session.flush()
+    extra_ctx = {"offline_seq": client_seq} if client_seq is not None else None
+    label_job = await label_service.print_label(
+        session,
+        LabelS.LabelPrintRequest(
+            target=box.code, label_type="BOX_LABEL", printer=printer_id, copies=1
+        ),
+        Principal(station=station),
+        extra_ctx=extra_ctx,
+    )
+    await session.commit()
+    await session.refresh(box)
+    return box, label_job
+
+
+def pack_box_out(box: PackBox, wo: WorkOrder, label_job: LabelS.LabelJob | None) -> ShipS.PackBox:
+    return ShipS.PackBox(
+        id=box.id,
+        code=box.code,
+        wo_code=wo.code,
+        box_no=box.box_no,
+        qty=box.qty,
+        packed_at=box.packed_at,
+        shipment_id=box.shipment_id,
+        label_job=label_job,
+        wo_qty_packed=wo.qty_packed,
+        wo_status=wo.status,
+    )
+
+
+# ======================================================================
+# SHIP (A4-02~04, api-contract §5.2 5-SHIP · §13.6 다박스) — 스캔·REST(`/shipments`) 공유
+# ======================================================================
+async def decide_ship(
+    session: AsyncSession,
+    *,
+    boxes: list[PackBox],
+    tracking_no: str | None,
+    recent_same_scan: bool = False,
+    late_arrival: bool = False,
+    target_type: str = "LT",
+    check_present: bool = True,
+    check_valid: bool = True,
+    input_via: str = "HID",
+) -> engine.Decision:
+    ship_boxes = await _ship_box_infos(session, boxes)
+    ctx = engine.ScanContext(
+        action="SHIP",
+        station_process_code="P60",
+        target_type=target_type,
+        check_present=check_present,
+        check_valid=check_valid,
+        input_via=input_via,
+        vb_mapped_wo=False,
+        wo_found=False,
+        wo_status=None,
+        steps=(),
+        ship_tracking_no=tracking_no,
+        ship_boxes=ship_boxes,
+        recent_same_scan=recent_same_scan,
+        late_arrival=late_arrival,
+    )
+    return engine.decide(ctx)
+
+
+async def apply_ship(
+    session: AsyncSession,
+    *,
+    decision: engine.Decision,
+    boxes: list[PackBox],
+    tracking_no: str,
+    carrier: str | None,
+    worker: AppUser | None,
+    station: Station | None,
+    event_uuid: uuid.UUID | None,
+    confirm: bool = True,
+) -> Shipment:
+    """§6.4: 같은 SO·같은 tracking_no 의 READY shipment 가 있으면 합류, 없으면 생성. 박스마다
+    WO 가 다를 수 있어(§13.6, 같은 SO 여러 WO) WO 별로 P60 단계를 따로 갱신한다."""
+    assert boxes
+    now = datetime.now(UTC)
+    first_wo = await session.get(WorkOrder, boxes[0].wo_id)
+    assert first_wo is not None
+    so = await session.get(SalesOrder, first_wo.so_id)
+    assert so is not None
+
+    shipment = (
+        await session.execute(
+            select(Shipment).where(
+                Shipment.so_id == so.id,
+                Shipment.tracking_no == tracking_no,
+                Shipment.status == "READY",
+            )
+        )
+    ).scalar_one_or_none()
+    if shipment is None:
+        shipment = Shipment(
+            so_id=so.id,
+            carrier=carrier,
+            tracking_no=tracking_no,
+            status="READY",
+            worker_id=worker.id if worker else None,
+            station_id=station.id if station else None,
+            event_uuid=event_uuid,
+        )
+        session.add(shipment)
+        await session.flush()
+    elif carrier and not shipment.carrier:
+        shipment.carrier = carrier
+
+    for b in boxes:
+        b.shipment_id = shipment.id
+        session.add(ShipmentBox(shipment_id=shipment.id, box_id=b.id))
+    shipment.qty_total = shipment.qty_total + sum(b.qty for b in boxes)
+    await session.flush()
+
+    if confirm:
+        shipment.status = "SHIPPED"
+        shipment.shipped_at = now
+        if worker is not None:
+            shipment.worker_id = worker.id
+        if station is not None:
+            shipment.station_id = station.id
+        # confirm=False 로 여러 번에 걸쳐 모은 뒤 마지막에 confirm=True 로 부를 수 있다
+        # (§6.4 합류) — WO qty_shipped·P60·재고 반영은 "이번 호출의 boxes" 가 아니라
+        # "이 shipment 에 실제로 붙은 박스 전부"를 대상으로 정확히 한 번씩 해야 한다.
+        all_boxes = (
+            (await session.execute(select(PackBox).where(PackBox.shipment_id == shipment.id)))
+            .scalars()
+            .all()
+        )
+        by_wo: dict[int, list[PackBox]] = {}
+        for b in all_boxes:
+            by_wo.setdefault(b.wo_id, []).append(b)
+        for wo_id, wo_boxes in by_wo.items():
+            wo = await session.get(WorkOrder, wo_id)
+            assert wo is not None
+            steps = await _load_steps(session, wo.id)
+            names = await process_names(session)
+            snaps = _step_snapshots(steps, names)
+            p60 = engine.find_step(snaps, "P60")
+            qty_add = sum(b.qty for b in wo_boxes)
+            if p60 is not None:
+                status, total = engine.accumulate_to_target(p60.qty_good or 0, qty_add, p60.qty_in)
+                steps_by_seq = {s.seq: s for s in steps}
+                await _apply_updates(
+                    session,
+                    steps_by_seq,
+                    (
+                        engine.StepUpdate(
+                            seq=p60.seq,
+                            status=status,
+                            qty_good=total,
+                            qty_bad=0,
+                            mark_done_at=(status == "DONE"),
+                        ),
+                    ),
+                    worker_id=worker.id if worker else None,
+                    equipment_id=None,
+                    approver_id=None,
+                    now=now,
+                )
+            wo.qty_shipped = wo.qty_shipped + qty_add
+            recalc.recalc_wo(wo, steps)
+            await add_stock_txn(
+                session,
+                wo.item_id,
+                -qty_add,
+                txn_type="SHIP",
+                ref_type="shipment",
+                ref_id=shipment.id,
+                created_by=worker.id if worker else None,
+            )
+        await recalc.recalc_so(session, so)
+        if so.status == "SHIPPED" and so.shipped_at is None:
+            so.shipped_at = now
+    await session.flush()
+    return shipment
+
+
+async def shipment_out(session: AsyncSession, shipment: Shipment) -> ShipS.ShipmentDetail:
+    so = await session.get(SalesOrder, shipment.so_id)
+    assert so is not None
+    customer = await session.get(Customer, so.customer_id)
+    assert customer is not None
+    box_rows = (
+        (await session.execute(select(PackBox).where(PackBox.shipment_id == shipment.id)))
+        .scalars()
+        .all()
+    )
+    wo_codes = await load_by_id_codes(session, {b.wo_id for b in box_rows})
+    worker = await session.get(AppUser, shipment.worker_id) if shipment.worker_id else None
+    wo_rows = (
+        (
+            await session.execute(
+                select(WorkOrder).where(WorkOrder.so_id == so.id, WorkOrder.status != "CANCELLED")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    remaining = sum(w.qty_ordered - w.qty_shipped for w in wo_rows)
+    return ShipS.ShipmentDetail(
+        id=shipment.id,
+        so_code=so.code,
+        customer_name=customer.name,
+        carrier=shipment.carrier,
+        tracking_no=shipment.tracking_no,
+        status=shipment.status,
+        shipped_at=shipment.shipped_at,
+        qty_total=shipment.qty_total,
+        box_count=len(box_rows),
+        boxes=[
+            ShipS.PackBoxSummary(
+                id=b.id,
+                code=b.code,
+                wo_code=wo_codes[b.wo_id],
+                box_no=b.box_no,
+                qty=b.qty,
+                packed_at=b.packed_at,
+                shipment_id=b.shipment_id,
+            )
+            for b in box_rows
+        ],
+        worker=user_summary(worker) if worker is not None else None,
+        so_remaining_qty=int(remaining),
+    )
+
+
+async def load_by_id_codes(session: AsyncSession, wo_ids: set[int]) -> dict[int, str]:
+    if not wo_ids:
+        return {}
+    rows = (
+        await session.execute(select(WorkOrder.id, WorkOrder.code).where(WorkOrder.id.in_(wo_ids)))
+    ).all()
+    return dict(rows)
+
+
+# ======================================================================
+# MAP (A3-02, api-contract §5.2 5-MAP) — 스캔·REST(`/vendor-barcodes/map`) 공유
+# ======================================================================
+async def decide_map(*, wo: WorkOrder | None, wo_code: str | None) -> engine.Decision:
+    ctx = engine.ScanContext(
+        action="MAP",
+        station_process_code=None,
+        target_type="VB",
+        check_present=False,
+        check_valid=False,
+        input_via="HID",
+        vb_mapped_wo=False,
+        wo_found=False,
+        wo_status=None,
+        steps=(),
+        map_wo_code=wo_code,
+        map_wo_found=wo is not None,
+    )
+    return engine.decide(ctx)
+
+
+async def apply_map(
+    session: AsyncSession,
+    *,
+    vendor_barcode: str,
+    wo: WorkOrder,
+    worker: AppUser,
+    event_uuid: uuid.UUID | None,
+) -> VendorBarcodeMap:
+    """§5.3: "2건 이상 active 는 만들지 않는다" — 같은 바코드의 다른 active 매핑을 비활성화한
+    뒤 (재)매핑한다. ``event_uuid`` 는 지금은 저장하지 않는다(vendor_barcode_map 에 그 컬럼이
+    없다 — scan_event 로 추적된다)."""
+    del event_uuid
+    others = (
+        await session.execute(
+            select(VendorBarcodeMap).where(
+                VendorBarcodeMap.vendor_barcode == vendor_barcode,
+                VendorBarcodeMap.active.is_(True),
+                VendorBarcodeMap.wo_id != wo.id,
+            )
+        )
+    ).scalars().all()
+    for o in others:
+        o.active = False
+    existing = (
+        await session.execute(
+            select(VendorBarcodeMap).where(
+                VendorBarcodeMap.vendor_barcode == vendor_barcode,
+                VendorBarcodeMap.wo_id == wo.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.active = True
+        existing.mapped_at = datetime.now(UTC)
+        existing.mapped_by = worker.id
+        await session.flush()
+        return existing
+    mapping = VendorBarcodeMap(
+        vendor_barcode=vendor_barcode,
+        wo_id=wo.id,
+        item_id=wo.item_id,
+        mapped_by=worker.id,
+        active=True,
+    )
+    session.add(mapping)
+    await session.flush()
+    return mapping
+
+
+def vendor_barcode_map_out(
+    mapping: VendorBarcodeMap, wo: WorkOrder, item: Item, mapped_by: AppUser
+) -> MatS.VendorBarcodeMap:
+    return MatS.VendorBarcodeMap(
+        id=mapping.id,
+        vendor_barcode=mapping.vendor_barcode,
+        wo_code=wo.code,
+        item=IdRef(id=item.id, code=item.code, name=item.name),
+        mapped_at=mapping.mapped_at,
+        mapped_by=user_summary(mapped_by),
+        active=mapping.active,
     )
 
 
@@ -407,6 +1178,18 @@ async def handle_scan(
         steps = await _load_steps(session, wo.id)
         names = await process_names(session)
 
+    extra = body.extra or S.ScanExtra()
+
+    # SHIP(§13.6)·MAP(§5.2 5-MAP) 은 단일 WO 파이프라인 밖이라 여기서 따로 해석한다.
+    ship_boxes_orm: list[PackBox] = []
+    if body.action == "SHIP":
+        ship_boxes_orm = await resolve_ship_boxes(
+            session, code=body.code, target_type=target_type, box_codes=extra.box_codes
+        )
+    map_target_wo: WorkOrder | None = None
+    if body.action == "MAP" and extra.wo_code:
+        map_target_wo = await _find_wo_by_code(session, extra.wo_code)
+
     equipment: Equipment | None = None
     equipment_valid = False
     if body.equipment_code:
@@ -422,7 +1205,19 @@ async def handle_scan(
 
     recent_same_scan = False
     late_arrival = False
-    if wo is not None and station.process_code is not None:
+    if body.action == "RECEIVE" and wo is not None:
+        recent_same_scan = await _recent_same_receive(
+            session, wo.id, body.qty_good or 0, body.qty_box, now
+        )
+        late_arrival = await _late_arrival(session, wo.id, body.scanned_at)
+    elif body.action == "SHIP":
+        if extra.tracking_no:
+            recent_same_scan = await _recent_same_ship(
+                session, extra.tracking_no, frozenset(b.code for b in ship_boxes_orm), now
+            )
+        if ship_boxes_orm:
+            late_arrival = await _late_arrival(session, ship_boxes_orm[0].wo_id, body.scanned_at)
+    elif wo is not None and station.process_code is not None:
         recent_same_scan = await _recent_same_scan(
             session, wo.id, station.process_code, body.action, now
         )
@@ -435,7 +1230,6 @@ async def handle_scan(
         if current_design_version is not None and current_design_version != wo.design_version:
             design_outdated = True
 
-    extra = body.extra or S.ScanExtra()
     ctx = engine.ScanContext(
         action=body.action,
         station_process_code=station.process_code,
@@ -452,12 +1246,18 @@ async def handle_scan(
         process_requires_equipment=process_requires_equipment,
         qty_good=body.qty_good,
         qty_bad=body.qty_bad,
+        qty_box=body.qty_box,
+        inspection=extra.inspection,
         variance_reason=extra.variance_reason,
         variance_reason_code=extra.variance_reason_code,
         recent_same_scan=recent_same_scan,
         late_arrival=late_arrival,
         design_outdated=design_outdated,
         current_design_version=current_design_version,
+        map_wo_code=extra.wo_code,
+        map_wo_found=map_target_wo is not None,
+        ship_tracking_no=extra.tracking_no,
+        ship_boxes=await _ship_box_infos(session, ship_boxes_orm),
     )
     decision = engine.decide(ctx)
 
@@ -471,19 +1271,97 @@ async def handle_scan(
 
     steps_by_seq = {s.seq: s for s in steps}
     equip_id = equipment.id if (equipment_valid and equipment is not None) else None
+    receipt_resp: MatS.Receipt | None = None
+    box_resp: ShipS.PackBox | None = None
+    label_job_resp: LabelS.LabelJob | None = None
+    shipment_resp: ShipS.ShipmentDetail | None = None
     if decision.kind == "APPLY":
-        await _apply_updates(
-            session,
-            steps_by_seq,
-            decision.step_updates,
-            worker_id=worker.id if worker else None,
-            equipment_id=equip_id,
-            approver_id=None,
-            now=now,
-        )
-        assert wo is not None and so is not None
-        recalc.recalc_wo(wo, steps)
-        await recalc.recalc_so(session, so)
+        if body.action in ("START", "DONE"):
+            await _apply_updates(
+                session,
+                steps_by_seq,
+                decision.step_updates,
+                worker_id=worker.id if worker else None,
+                equipment_id=equip_id,
+                approver_id=None,
+                now=now,
+            )
+            assert wo is not None and so is not None
+            recalc.recalc_wo(wo, steps)
+            await recalc.recalc_so(session, so)
+        elif body.action == "RECEIVE":
+            assert wo is not None and extra.inspection is not None
+            item = await session.get(Item, wo.item_id)
+            assert item is not None
+            lot, receipt = await apply_receive(
+                session,
+                decision=decision,
+                wo=wo,
+                steps=steps,
+                item=item,
+                qty=body.qty_good or 0,
+                box_count=body.qty_box,
+                inspection=extra.inspection,
+                vendor=extra.vendor,
+                vendor_barcode=body.code if target_type == "VB" else None,
+                received_at=body.scanned_at,
+                worker=worker,
+                station=station,
+                event_uuid=body.event_uuid,
+            )
+            if worker is not None:
+                receipt_resp = receipt_out(receipt, lot, item, worker, wo)
+        elif body.action == "PACK":
+            assert wo is not None
+            box, label_job_resp = await apply_pack(
+                session,
+                decision=decision,
+                wo=wo,
+                steps=steps,
+                qty_box=body.qty_box or 0,
+                printer_id=extra.printer_id,
+                worker=worker,
+                station=station,
+                event_uuid=body.event_uuid,
+                client_seq=body.client_seq,
+            )
+            box_resp = pack_box_out(box, wo, label_job_resp)
+            if not label_job_resp.zpl_sent:
+                # §13.7: 박스는 항상 커밋되지만, 라벨 출력 실패는 WARN 으로 눈에 보이게 한다
+                # (조용한 실패 금지). PRINTER_UNREACHABLE(⑭) 과 NO_PRINTER(프린터 선택 순서
+                # 문단)는 문구가 다르다.
+                msg = (
+                    "라벨 출력 실패 — [재출력] 을 누르세요"
+                    if label_job_resp.error == "PRINTER_UNREACHABLE"
+                    else "프린터 미지정 — 단말 설정을 확인하세요"
+                )
+                decision = replace(decision, result="WARN", warnings=(*decision.warnings, msg))
+        elif body.action == "SHIP":
+            assert extra.tracking_no is not None
+            shipment_row = await apply_ship(
+                session,
+                decision=decision,
+                boxes=ship_boxes_orm,
+                tracking_no=extra.tracking_no,
+                carrier=extra.carrier,
+                worker=worker,
+                station=station,
+                event_uuid=body.event_uuid,
+            )
+            shipment_resp = await shipment_out(session, shipment_row)
+        elif body.action == "MAP":
+            assert map_target_wo is not None and worker is not None
+            await apply_map(
+                session,
+                vendor_barcode=body.code,
+                wo=map_target_wo,
+                worker=worker,
+                event_uuid=body.event_uuid,
+            )
+
+    payload = _event_payload(body, decision)
+    if body.action == "SHIP":
+        payload["_ship_box_codes"] = sorted(b.code for b in ship_boxes_orm)
 
     ev = ScanEvent(
         event_uuid=body.event_uuid,
@@ -499,7 +1377,7 @@ async def handle_scan(
         qty_bad=body.qty_bad,
         qty_box=body.qty_box,
         equipment_id=equip_id,
-        payload=_event_payload(body, decision),
+        payload=payload,
         result=decision.result,
         result_msg=decision.message,
         approval_status="PENDING" if decision.kind == "PENDING" else None,
@@ -517,6 +1395,10 @@ async def handle_scan(
         duplicate=False,
         worker=worker,
         station_process_code=station.process_code,
+        receipt=receipt_resp,
+        box=box_resp,
+        label_job=label_job_resp,
+        shipment=shipment_resp,
     )
 
     session.add(
@@ -597,16 +1479,7 @@ async def _resolve_approver(
         return principal.user
     if not body.approver_card or not body.pin:
         raise validation(["body", "approver_card"], "approver_card 와 pin 이 필요합니다")
-    card = body.approver_card.strip().upper()
-    approver = (
-        await session.execute(select(AppUser).where(AppUser.card_code == card))
-    ).scalar_one_or_none()
-    if approver is None:
-        raise ApiError(404, "USER_CARD_NOT_FOUND", f"카드 {card} 에 해당하는 사용자가 없습니다")
-    if approver.role not in ("MANAGER", "ADMIN"):
-        raise ApiError(403, "APPROVER_ROLE", "승인 권한이 없습니다")
-    await verify_pin(session, approver, body.pin)
-    return approver
+    return await resolve_manager_approver(session, body.approver_card, body.pin)
 
 
 async def _rebuild_ctx_from_event(

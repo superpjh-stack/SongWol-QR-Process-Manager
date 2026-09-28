@@ -590,3 +590,98 @@ async def test_unhandled_exception_is_contract_500(admin_headers: dict[str, str]
         assert res.headers.get("x-request-id") == "qa-500-trace"
         d = (await c.get(f"{API}/so/{so['id']}", headers=admin_headers)).json()
         assert d["wo_count"] == 0 and d["status"] == "OPEN" and d["confirmed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_wo_split_jwt_and_station(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """B4-04 · §13.4 shopfloor ⑱ [S3]: 하위 WO 분할 — JWT(ADMIN/MANAGER) 와
+    STATION(approver_card+pin) 둘 다 허용한다."""
+    from tests.conftest import ensure_station, ensure_user
+
+    m = await setup_master(client, admin_headers, routings=("SCREEN",))
+    so = await make_so(
+        client,
+        admin_headers,
+        m,
+        lines=[
+            {"item_id": m["item"]["id"], "print_method": "SCREEN", "qty": 500, "unit_price": 1000}
+        ],
+    )
+    line = so["lines"][0]
+    await upload_design(client, admin_headers, so["id"], line["id"])
+    await confirm_design(client, admin_headers, so["id"], line["id"])
+    wo = (await issue_all(client, admin_headers, so["id"]))["work_orders"][0]
+
+    # 권한: SALES 는 분할 불가
+    sales = await headers_for(client, uniq("sales_split").lower(), "SALES")
+    res = await client.post(
+        f"{API}/wo/{wo['id']}/split", headers=sales, json={"qty": 100, "reason": "부족"}
+    )
+    assert res.status_code == 403
+
+    # qty >= qty_ordered → 422
+    res = await client.post(
+        f"{API}/wo/{wo['id']}/split", headers=admin_headers, json={"qty": 500, "reason": "부족"}
+    )
+    assert res.status_code == 422
+
+    # JWT(MANAGER) 분할 성공: 하위 WO `-A`, 라우팅 복사, parent.qty_ordered 감소
+    manager = await headers_for(client, uniq("mgr_split").lower(), "MANAGER")
+    res = await client.post(
+        f"{API}/wo/{wo['id']}/split",
+        headers=manager,
+        json={"qty": 120, "reason": "부족분 선처리"},
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    parent, child = data["parent"], data["child"]
+    assert parent["code"] == wo["code"] and parent["qty_ordered"] == 380
+    assert child["code"] == f"{wo['code']}-A" and child["qty_ordered"] == 120
+    assert child["split_suffix"] == "A" and child["parent_wo_code"] == wo["code"]
+    assert child["status"] == "ISSUED"
+    assert [s["process_code"] for s in child["steps"]] == ["P20", "P30", "P50", "P60"]
+    assert child["steps"][0]["qty_in"] == 120
+
+    # WO 상세에 children 반영
+    detail = (await client.get(f"{API}/wo/{wo['id']}", headers=admin_headers)).json()
+    assert [c["code"] for c in detail["children"]] == [child["code"]]
+
+    # STATION 경로: approver_card+pin 필요, MANAGER/ADMIN 만
+    station_id, api_key = await ensure_station(uniq("T-SPLIT-"), type_="KIOSK", process_code="P20")
+    res = await client.post(
+        f"{API}/wo/{wo['id']}/split",
+        headers={"X-Station-Key": api_key},
+        json={"qty": 50, "reason": "추가 분할"},
+    )
+    assert res.status_code == 422
+
+    worker = await ensure_user(uniq("w_split").lower(), "WORKER", pin="1234", card=True)
+    res = await client.post(
+        f"{API}/wo/{wo['id']}/split",
+        headers={"X-Station-Key": api_key},
+        json={
+            "qty": 50,
+            "reason": "추가 분할",
+            "approver_card": worker.card_code,
+            "pin": "1234",
+        },
+    )
+    assert res.status_code == 403 and res.json()["code"] == "APPROVER_ROLE"
+
+    approver = await ensure_user(uniq("mgr_card").lower(), "MANAGER", pin="5678", card=True)
+    res = await client.post(
+        f"{API}/wo/{wo['id']}/split",
+        headers={"X-Station-Key": api_key},
+        json={
+            "qty": 50,
+            "reason": "추가 분할",
+            "approver_card": approver.card_code,
+            "pin": "5678",
+        },
+    )
+    assert res.status_code == 200, res.text
+    data2 = res.json()
+    assert data2["child"]["split_suffix"] == "B"
+    assert data2["parent"]["qty_ordered"] == 330

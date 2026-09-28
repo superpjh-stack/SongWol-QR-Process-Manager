@@ -6,7 +6,8 @@ from pydantic import AliasChoices, ConfigDict, Field
 
 from app.api.v1.schemas.common import ApiModel, CodeStr, KstDateTime, read_only_fields
 from app.api.v1.schemas.master import UserSummary
-from app.api.v1.schemas.order import LabelJob, LabelType
+from app.api.v1.schemas.order import LabelJob as LabelJob
+from app.api.v1.schemas.order import LabelType as LabelType
 
 PrinterPurpose = Literal["PRODUCTION", "PACKING"]
 LabelFormat = Literal["ZPL", "HTML"]

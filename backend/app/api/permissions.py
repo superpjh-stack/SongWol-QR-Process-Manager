@@ -30,4 +30,8 @@ MIGRATION_WRITE = ("ADMIN",)
 # 수주·WO (A2, §4 「수주 등록·변경·취소·WO 발행」 · 「수주·WO 조회」 · 「WO 분할·보류·재작업」)
 ORDER_READ = ALL_USER_ROLES  # + STATION
 ORDER_WRITE = ("ADMIN", "MANAGER", "SALES")
-WO_MANAGE = ("ADMIN", "MANAGER")  # hold · resume · cancel · close (· split · rework)
+WO_MANAGE = ("ADMIN", "MANAGER")  # hold · resume · cancel · close · split (· rework)
+
+# 입고·바코드 매핑 (A3-01/02) · 포장·발송 (A4-01~04) — §4/§13.8: SALES·WORKER 는 JWT 로 쓸 수
+# 없다(STATION 만 W). ORDER_WRITE 와 다르다(SO 는 SALES 가 쓴다).
+MATERIAL_WRITE = ("ADMIN", "MANAGER")
