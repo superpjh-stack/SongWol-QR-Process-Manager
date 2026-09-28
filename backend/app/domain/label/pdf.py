@@ -33,6 +33,8 @@ from app.domain.label.qr import qr_png_data_uri, qr_url
 
 logger = logging.getLogger(__name__)
 
+PDF_QR_PX = 360  # 30 mm 박스에 들어갈 심볼 PNG 목표 픽셀 (배율 내림, 확대 시 nearest)
+
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
 KOREAN_FONT_CANDIDATES: tuple[Path, ...] = (
@@ -117,19 +119,23 @@ async def document_context(
     from app.domain.label.service import last_issue_no, wo_context
 
     customer = await session.get(Customer, so.customer_id)
+    cancelled = 0
     if only_wo is not None:
         wos = [only_wo]
     else:
+        # DRAFT(미발행)·CANCELLED(취소, DEF-QA1-S1-004) 는 쪽을 만들지 않는다. 취소는 표지에 건수만.
         stmt = (
             select(WorkOrder)
             .where(WorkOrder.so_id == so.id, WorkOrder.status != "DRAFT")
             .order_by(WorkOrder.code)
         )
-        wos = list((await session.execute(stmt)).scalars().all())
+        all_wos = list((await session.execute(stmt)).scalars().all())
+        wos = [w for w in all_wos if w.status != "CANCELLED"]
+        cancelled = len(all_wos) - len(wos)
     work_orders: list[dict[str, Any]] = []
     for wo in wos:
         ctx = await wo_context(session, wo)
-        ctx["qr_png_uri"] = qr_png_data_uri(wo.code, "M", 360)
+        ctx["qr_png_uri"] = qr_png_data_uri(wo.code, "M", PDF_QR_PX, border=0)
         ctx["design_thumbnail_uri"] = _file_data_uri(ctx["design_thumbnail_path"])
         ctx["issue_no"] = await last_issue_no(session, "WO", wo.code, "WORK_ORDER_PDF")
         ctx["std_lead_total"] = _sum_hours(ctx["steps"])
@@ -137,8 +143,9 @@ async def document_context(
     return {
         "code": so.code,
         "qr_url": qr_url(so.code),
-        "qr_png_uri": qr_png_data_uri(so.code, "M", 360),
+        "qr_png_uri": qr_png_data_uri(so.code, "M", PDF_QR_PX, border=0),
         "issue_no": await last_issue_no(session, "SO", so.code, "WORK_ORDER_PDF"),
+        "cancelled_count": cancelled,
         "customer_name": customer.name if customer else "",
         "order_date": so.order_date.isoformat(),
         "due_date": so.due_date.isoformat(),
@@ -183,7 +190,7 @@ def sample_document_context() -> dict[str, Any]:
     wo: dict[str, Any] = dict(SAMPLE_CONTEXT["WO_LABEL"])
     wo.update(
         qr_url=qr_url(str(wo["code"])),
-        qr_png_uri=qr_png_data_uri(str(wo["code"]), "M", 360),
+        qr_png_uri=qr_png_data_uri(str(wo["code"]), "M", PDF_QR_PX, border=0),
         design_thumbnail_uri=None,
         issue_no=1,
         std_lead_total=_sum_hours(wo["steps"]),
@@ -192,8 +199,9 @@ def sample_document_context() -> dict[str, Any]:
     return {
         "code": so_code,
         "qr_url": qr_url(so_code),
-        "qr_png_uri": qr_png_data_uri(so_code, "M", 360),
+        "qr_png_uri": qr_png_data_uri(so_code, "M", PDF_QR_PX, border=0),
         "issue_no": 1,
+        "cancelled_count": 0,
         "customer_name": wo["customer_name"],
         "order_date": "2026-09-28",
         "due_date": wo["due_date"],

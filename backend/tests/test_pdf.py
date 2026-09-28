@@ -86,3 +86,60 @@ def test_korean_font_and_sample_document() -> None:
     assert ctx["work_orders"] and ctx["qr_png_uri"].startswith("data:image/png")
     pdf = pdf_mod.html_to_pdf("<html><body><p>한글</p></body></html>")
     assert pdf[:5] == b"%PDF-" and _pages(pdf) == 1
+
+
+async def test_so_pdf_excludes_cancelled_wo(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """DEF-QA1-S1-004: CANCELLED WO 는 쪽 없음, 표지에 「취소 n건」."""
+    from sqlalchemy import select
+
+    from app.db.models.order import WorkOrder
+
+    data = await make_so(with_wo=2)
+    async with SessionLocal() as s:
+        wo = (
+            await s.execute(select(WorkOrder).where(WorkOrder.code == data["wo_codes"][1]))
+        ).scalar_one()
+        wo.status = "CANCELLED"
+        await s.commit()
+    res = await client.get(f"{API}/labels/so/{data['so_code']}.pdf", headers=admin_headers)
+    assert res.status_code == 200 and _pages(res.content) == 2
+    text = _text(res.content)
+    assert data["wo_codes"][0] in text and data["wo_codes"][1] not in text
+    assert "취소 1건" in text
+
+
+def _qr_symbol_mm(pdf: bytes, page: int = 0, dpi: int = 300) -> tuple[float, float]:
+    """오른쪽 상단 QR 심볼의 검은 모듈 영역 폭·높이(mm). 행별 어두운 구간 폭이 26~36mm 인 행만 센다
+    (테두리선은 훨씬 넓고, 캡션 글자는 더 좁다)."""
+    doc = pdfium.PdfDocument(io.BytesIO(pdf))
+    im = doc[page].render(scale=dpi / 72).to_pil().convert("L")
+    w, h = im.size
+    px = im.load()
+    x0 = int(w * 0.6)
+    per_mm = dpi / 25.4
+    rows: list[tuple[int, int, int]] = []
+    for y in range(0, int(h * 0.25)):
+        xs = [x for x in range(x0, w) if px[x, y] < 128]
+        if not xs:
+            continue
+        width_mm = (xs[-1] - xs[0] + 1) / per_mm
+        if 26 <= width_mm <= 36:
+            rows.append((y, xs[0], xs[-1]))
+    assert rows, "QR rows not found"
+    # 파인더 패턴 행(위·아래 7모듈)은 항상 전폭이므로 y 범위가 심볼 높이다
+    width = (max(r[2] for r in rows) - min(r[1] for r in rows) + 1) / per_mm
+    height = (max(r[0] for r in rows) - min(r[0] for r in rows) + 1) / per_mm
+    return width, height
+
+
+async def test_pdf_qr_symbol_is_30mm(client: AsyncClient, admin_headers: dict[str, str]) -> None:
+    """DEF-QA2-S1-006 / D50: 심볼 자체 ≥ 29mm (quiet zone 은 CSS 여백)."""
+    data = await make_so(with_wo=1)
+    res = await client.get(f"{API}/labels/so/{data['so_code']}.pdf", headers=admin_headers)
+    assert res.status_code == 200
+    for page in (0, 1):
+        width, height = _qr_symbol_mm(res.content, page)
+        assert 29.0 <= width <= 31.5, (page, width)
+        assert height >= 29.0, (page, height)

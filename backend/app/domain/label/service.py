@@ -13,11 +13,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import socket
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal
@@ -65,6 +69,12 @@ TARGET_TYPE_FOR_LABEL: dict[str, str] = {
 ERR_NO_PRINTER = "NO_PRINTER"
 ERR_PRINTER_UNREACHABLE = "PRINTER_UNREACHABLE"
 
+# D45 (DEF-QA2-S1-012): 프린터 host 는 사설 대역만 — test/print 가 임의 host:port 로 붙지 않게
+PRIVATE_NETS = tuple(
+    ipaddress.ip_network(n)
+    for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "::1/128")
+)
+
 
 # ======================================================================
 # label_issue (B1-01 · B1-03 차수)
@@ -91,20 +101,37 @@ async def record_issue(
     printer_id: str | None = None,
     copies: int = 1,
 ) -> LabelIssue:
-    """발행 이력 1행 추가 (issue_no = 마지막 차수 + 1). flush 까지만 — 커밋은 호출자."""
-    issue = LabelIssue(
-        target_type=target_type,
-        target_code=target_code,
-        label_type=label_type,
-        issue_no=await last_issue_no(session, target_type, target_code, label_type) + 1,
-        printer_id=printer_id,
-        copies=copies,
-        issued_by=issued_by,
-        station_id=station_id,
+    """발행 이력 1행 추가 (issue_no = 마지막 차수 + 1). flush 까지만 — 커밋은 호출자.
+
+    D44 (DEF-QA2-S1-003): 차수 계산은 대상별 ``pg_advisory_xact_lock(hashtext(target_code))`` 아래
+    (트랜잭션 끝까지 유지 → 동시 출력 직렬화). 그래도 UK 에 걸리면 SAVEPOINT 로 되돌려 1회 재시도.
+    """
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+        {"k": f"label_issue:{target_type}:{target_code}"},
     )
-    session.add(issue)
-    await session.flush()
-    return issue
+    for attempt in (1, 2):
+        issue = LabelIssue(
+            target_type=target_type,
+            target_code=target_code,
+            label_type=label_type,
+            issue_no=await last_issue_no(session, target_type, target_code, label_type) + 1,
+            printer_id=printer_id,
+            copies=copies,
+            issued_by=issued_by,
+            station_id=station_id,
+        )
+        try:
+            async with session.begin_nested():
+                session.add(issue)
+                await session.flush()
+        except IntegrityError:
+            if attempt == 2:
+                raise
+            session.expunge(issue)
+            continue
+        return issue
+    raise AssertionError("unreachable")
 
 
 async def issue_labels_for_wo(
@@ -128,12 +155,13 @@ async def issue_labels_for_wo(
     return out
 
 
-async def label_issuer(session: AsyncSession, wo: WorkOrder) -> None:
-    """개발A ``app/domain/order/ports.LabelIssuer`` 시그니처 ``(session, wo) -> None`` 어댑터.
+async def label_issuer(session: AsyncSession, wo: WorkOrder, issued_by: int | None = None) -> None:
+    """개발A ``app/domain/order/ports.LabelIssuer`` 어댑터 ``(session, wo, issued_by=None) -> None``
+    (DEF-QA1-S1-002: 발행자를 label_issue.issued_by 에 기록).
 
     ``ports.set_label_issuer(label_issuer)`` 로 꽂는다 (``router.bind_order_ports()`` 가 시도).
     """
-    await issue_labels_for_wo(session, wo)
+    await issue_labels_for_wo(session, wo, issued_by)
 
 
 async def list_issues(session: AsyncSession, target_code: str) -> list[S.LabelIssue]:
@@ -157,10 +185,10 @@ def issue_out(i: LabelIssue, u: AppUser | None) -> S.LabelIssue:
         issue_no=i.issue_no,
         printer_id=i.printer_id,
         copies=i.copies,
-        sent_at=None,
+        sent_at=i.sent_at,
         pdf_url=None,
-        zpl_sent=False,
-        error=None,
+        zpl_sent=i.zpl_sent,
+        error=i.error,
         issued_at=i.issued_at,
         issued_by=UserSummary.model_validate(u) if u is not None else None,
         station_id=i.station_id,
@@ -337,9 +365,37 @@ async def get_printer(session: AsyncSession, printer_id: str) -> Printer:
     return p
 
 
+def _is_private(ip: str) -> bool:
+    addr = ipaddress.ip_address(ip)
+    return any(addr in net for net in PRIVATE_NETS)
+
+
+async def check_printer_host(host: str) -> None:
+    """D45: IP 또는 호스트명(resolve 후 전 주소)이 사설 대역이어야 한다 — 422 BAD_PRINTER_HOST."""
+    host = host.strip()
+    try:
+        ok = _is_private(host)
+    except ValueError:
+        try:
+            infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
+        except socket.gaierror as e:
+            raise validation(
+                ["body", "host"], f"호스트를 찾을 수 없습니다: {host}", "BAD_PRINTER_HOST"
+            ) from e
+        ips = {str(info[4][0]) for info in infos}
+        ok = bool(ips) and all(_is_private(ip) for ip in ips)
+    if not ok:
+        raise validation(
+            ["body", "host"],
+            f"프린터 host 는 사설 대역(10/8 · 172.16/12 · 192.168/16 · 127/8)만 허용합니다: {host}",
+            "BAD_PRINTER_HOST",
+        )
+
+
 async def create_printer(session: AsyncSession, body: S.PrinterCreate) -> Printer:
     if await session.get(Printer, body.id) is not None:
         raise duplicate_code("프린터", body.id)
+    await check_printer_host(body.host)
     p = Printer(**body.model_dump())
     session.add(p)
     await session.commit()
@@ -349,6 +405,8 @@ async def create_printer(session: AsyncSession, body: S.PrinterCreate) -> Printe
 
 async def update_printer(session: AsyncSession, printer_id: str, body: S.PrinterUpdate) -> Printer:
     p = await get_printer(session, printer_id)
+    if body.host is not None:
+        await check_printer_host(body.host)
     for k, v in body.model_dump(exclude_unset=True).items():
         if v is None and k != "location":
             continue  # 필수 컬럼은 null 로 못 지운다
@@ -456,6 +514,9 @@ async def print_label(
     sent, sent_at, error = await send_to_printer(
         printer, zpl_mod.with_copies(rendered, body.copies)
     )
+    # D48: 전송 결과를 이력에 기록 → GET /labels/issues 가 실값을 준다
+    issue.zpl_sent, issue.sent_at, issue.error = sent, sent_at, error
+    await session.commit()
     return LabelJob(
         issue_no=issue.issue_no,
         label_type=label_type,
@@ -514,9 +575,13 @@ async def get_template(session: AsyncSession, label_type: str) -> S.LabelTemplat
 
 
 def validate_template(label_type: str, body: str) -> None:
-    """문법 + 예시 컨텍스트 렌더. 실패 → 422 BAD_TEMPLATE (detail 에 원인)."""
+    """문법 + 허용 변수만(플레이스홀더 밖 이름 — ``cycler``·``self`` 같은 전역 포함 — 거부, D42)
+    + 예시 컨텍스트 샌드박스 렌더. 실패 → 422 BAD_TEMPLATE (detail 에 원인)."""
     try:
         zpl_mod.compile_template(body)
+        extra = zpl_mod.undeclared_names(body) - set(placeholders_for(label_type))
+        if extra:
+            raise zpl_mod.BadTemplate(f"허용되지 않는 변수: {', '.join(sorted(extra))}")
         zpl_mod.render(body, **sample_context(label_type))
     except zpl_mod.BadTemplate as e:
         raise ApiError(

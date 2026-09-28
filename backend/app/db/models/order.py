@@ -303,3 +303,7 @@ class LabelIssue(Base):
     station_id: Mapped[str | None] = mapped_column(
         String(20), ForeignKey("station.id", ondelete="RESTRICT")
     )
+    # 0008 (D48, DEF-QA1-S1-003/009): 전송 결과. PDF 발행(WORK_ORDER_PDF) 은 false·error NULL
+    zpl_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(String(40))

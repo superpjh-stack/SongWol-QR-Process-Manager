@@ -21,8 +21,9 @@
   .page { page-break-after: always; }
   .page:last-child { page-break-after: auto; }
   .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 3mm; margin-bottom: 4mm; }
-  .qr { width: 30mm; height: 30mm; }
-  .qr-box { text-align: center; font-size: 9pt; }
+  /* D50: 심볼 자체 30 mm (PNG 에 quiet zone 없음), 4모듈 quiet zone 은 여백(padding) 으로 */
+  .qr { width: 30mm; height: 30mm; display: block; margin: 0 auto; }
+  .qr-box { text-align: center; font-size: 9pt; padding: 4mm 4mm 0 4mm; background: #fff; }
   .code { font-family: "Menlo", "Courier New", monospace; font-size: 20pt; font-weight: bold; letter-spacing: 0.5px; }
   .meta { font-size: 10pt; color: #333; margin-top: 2mm; }
   table { border-collapse: collapse; width: 100%; margin-top: 3mm; }
@@ -47,7 +48,7 @@
         <h1>작업지시서 <span class="badge">{% if issue_no %}발행 {{ issue_no }}차{% else %}미발행{% endif %}</span></h1>
         <div class="code">{{ code }}</div>
         <div class="meta">거래처 <b>{{ customer_name }}</b> · 수주일 {{ order_date }} · <b>납기 {{ due_date }}</b></div>
-        <div class="meta">출력 {{ printed_at }} · 작업지시 {{ work_orders | length }}건</div>
+        <div class="meta">출력 {{ printed_at }} · 작업지시 {{ work_orders | length }}건{% if cancelled_count %} · 취소 {{ cancelled_count }}건(제외){% endif %}</div>
       </div>
       <div class="qr-box"><img class="qr" src="{{ qr_png_uri }}" alt="{{ code }}"><br>{{ code }}</div>
     </div>
@@ -66,7 +67,7 @@
       <thead><tr><th>WO</th><th>품목</th><th>가공방식</th><th class="num">수량</th><th>라우팅</th><th class="num">표준 리드타임(h)</th></tr></thead>
       <tbody>
       {% for w in work_orders %}<tr><td>{{ w.code }}</td><td>{{ w.item_name }}</td><td>{{ w.print_method_name }}</td><td class="num">{{ w.qty_ordered }}</td><td>{% for s in w.steps %}{{ s.process_code }}{% if not loop.last %} → {% endif %}{% endfor %}</td><td class="num">{{ w.std_lead_total }}</td></tr>
-      {% else %}<tr><td colspan="6">발행된 작업지시가 없습니다 (표지만 출력)</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="6">발행된 작업지시가 없습니다 (표지만 출력){% if cancelled_count %} · 취소 {{ cancelled_count }}건{% endif %}</td></tr>{% endfor %}
       </tbody>
     </table>
     <div class="foot">QR 을 스캔하면 진행 현황 조회 페이지로 이동합니다 ({{ qr_url }}).</div>

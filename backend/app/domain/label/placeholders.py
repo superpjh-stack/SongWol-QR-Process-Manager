@@ -33,7 +33,15 @@ PLACEHOLDERS: Final[dict[str, tuple[str, ...]]] = {
     # WO 플레이스홀더(_WO_FIELDS + code/qr_url/issue_no) 를 가진다.
     "WORK_ORDER_PDF": COMMON
     + _WO_FIELDS
-    + ("order_date", "customer_name", "lines", "work_orders", "font_css", "qr_png_uri"),
+    + (
+        "order_date",
+        "customer_name",
+        "lines",
+        "work_orders",
+        "cancelled_count",
+        "font_css",
+        "qr_png_uri",
+    ),
     "BOX_LABEL": COMMON
     + (
         "box_no",

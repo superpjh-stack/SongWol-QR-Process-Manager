@@ -394,3 +394,117 @@ async def test_print_permissions(client: AsyncClient) -> None:
             await client.post(f"{API}/labels/print", headers=h, json=body)
         ).status_code == status
     assert (await client.post(f"{API}/labels/print", json=body)).status_code == 401
+
+
+# ======================================================================
+# S1 수정 웨이브
+# ======================================================================
+SSTI = "{{ cycler.__init__.__globals__.os.getcwd() }}"
+
+
+async def test_template_sandbox_blocks_ssti(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """DEF-QA2-S1-002 / D42: PUT 은 허용 변수 밖 이름 거부, 렌더는 샌드박스."""
+    import os
+
+    for body in (
+        SSTI,
+        "{{ self }}",
+        "{{ code.__class__ }}",
+        "{{ range(3) }}",
+        "{{ self.__class__ }}",
+    ):
+        res = await client.put(
+            f"{API}/label-templates/WO_LABEL", headers=admin_headers, json={"body": body}
+        )
+        assert res.status_code == 422 and res.json()["code"] == "BAD_TEMPLATE", (body, res.text)
+        assert os.getcwd() not in res.text
+    # PUT 을 우회해 DB 에 직접 넣어도 렌더(미리보기) 에서 SecurityError → 422, 경로 노출 없음
+    from app.db.models.master import LabelTemplate
+
+    async with SessionLocal() as s:
+        row = await s.get(LabelTemplate, "WORKER_CARD")
+        assert row is not None
+        original = row.body
+        row.body = SSTI
+        await s.commit()
+    try:
+        res = await client.post(f"{API}/label-templates/WORKER_CARD/preview", headers=admin_headers)
+        assert res.status_code == 422 and res.json()["code"] == "BAD_TEMPLATE", res.text
+        assert os.getcwd() not in res.text
+        with pytest.raises(zpl_mod.BadTemplate):
+            zpl_mod.render("{{ code.__class__.__mro__ }}", code="x")
+        with pytest.raises(zpl_mod.BadTemplate):
+            zpl_mod.render(SSTI, code="x")
+    finally:
+        async with SessionLocal() as s:
+            row = await s.get(LabelTemplate, "WORKER_CARD")
+            assert row is not None
+            row.body = original
+            await s.commit()
+
+
+async def test_concurrent_print_issue_no_contiguous(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """DEF-QA2-S1-003 / D44: 같은 WO 동시 10건 → 전부 200, 차수 1..10."""
+    import asyncio
+
+    data = await make_so()
+    wo = data["wo_codes"][0]
+    pid = await ensure_printer(uniq("LP-CC"), purpose="PRODUCTION")
+    body = {"target": wo, "label_type": "WO_LABEL", "printer": pid}
+    results = await asyncio.gather(
+        *(client.post(f"{API}/labels/print", headers=admin_headers, json=body) for _ in range(10))
+    )
+    assert [r.status_code for r in results] == [200] * 10, [r.text for r in results]
+    assert sorted(r.json()["issue_no"] for r in results) == list(range(1, 11))
+    async with SessionLocal() as s:
+        rows = (await s.execute(select(LabelIssue).where(LabelIssue.target_code == wo))).scalars()
+        assert sorted(r.issue_no for r in rows) == list(range(1, 11))
+
+
+async def test_issue_results_recorded_and_issued_by() -> None:
+    """DEF-QA1-S1-002/003, DEF-QA2-S1-009 / D48: 이력에 전송 결과·발행자."""
+    data = await make_so()
+    admin_id = data["admin"].id
+    async with SessionLocal() as s:
+        wo = (
+            await s.execute(select(WorkOrder).where(WorkOrder.code == data["wo_codes"][0]))
+        ).scalar_one()
+        await svc.label_issuer(s, wo, admin_id)
+        await s.commit()
+        rows = (
+            (await s.execute(select(LabelIssue).where(LabelIssue.target_code == wo.code)))
+            .scalars()
+            .all()
+        )
+    assert rows and all(r.issued_by == admin_id for r in rows)
+    assert all(r.zpl_sent is False and r.error is None and r.sent_at is None for r in rows)
+
+
+async def test_issues_api_returns_real_send_result(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    data = await make_so()
+    wo = data["wo_codes"][0]
+    pid = await ensure_printer(uniq("LP-R"), purpose="PRODUCTION")
+    body = {"target": wo, "label_type": "WO_LABEL", "printer": pid}
+    assert (
+        await client.post(f"{API}/labels/print", headers=admin_headers, json=body)
+    ).status_code == 200
+    async with fake_printer() as (port, _received):
+        await ensure_printer(pid, purpose="PRODUCTION", port=port)
+        assert (
+            await client.post(f"{API}/labels/print", headers=admin_headers, json=body)
+        ).status_code == 200
+    res = await client.get(
+        f"{API}/labels/issues", headers=admin_headers, params={"target_code": wo}
+    )
+    assert res.status_code == 200
+    by_no = {i["issue_no"]: i for i in res.json()}
+    assert by_no[1]["zpl_sent"] is False and by_no[1]["error"] == "PRINTER_UNREACHABLE"
+    assert by_no[1]["printer_id"] == pid and by_no[1]["sent_at"] is None
+    assert by_no[2]["zpl_sent"] is True and by_no[2]["error"] is None
+    assert by_no[2]["sent_at"] and by_no[2]["sent_at"].endswith("+09:00")

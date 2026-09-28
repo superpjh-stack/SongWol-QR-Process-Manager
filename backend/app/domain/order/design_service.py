@@ -22,6 +22,7 @@ from fastapi import UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import filetype
 from app.core.config import get_settings
 from app.core.errors import ApiError, not_found, state_conflict, validation
 from app.db.models.master import AppUser
@@ -112,9 +113,20 @@ async def upload_design(
     ).scalar_one()
     version = int(last or 0) + 1
     rel_dir = Path(so.code) / str(line.line_no)
+    # D51: 임시 이름으로 쓴 뒤 매직 바이트로 형식을 판정해 실제 확장자로 저장 (svg 는 script 검사)
+    tmp_abs = abs_path(str(rel_dir / f"v{version}.upload"))
+    await _write_upload(upload, tmp_abs)
+    try:
+        with tmp_abs.open("rb") as fh:
+            ext = filetype.resolve_design_ext(ext, fh.read(filetype.SNIFF_BYTES))
+        if ext == "svg":
+            filetype.check_svg_safe(tmp_abs.read_text(encoding="utf-8", errors="replace"))
+    except ApiError:
+        tmp_abs.unlink(missing_ok=True)
+        raise
     rel_file = rel_dir / f"v{version}.{ext}"
     file_abs = abs_path(str(rel_file))
-    await _write_upload(upload, file_abs)
+    tmp_abs.replace(file_abs)
 
     thumb_rel: str | None = None
     if ext in THUMB_EXT:

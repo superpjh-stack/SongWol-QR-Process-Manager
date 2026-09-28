@@ -112,3 +112,35 @@ async def test_printer_permissions(client: AsyncClient, admin_headers: dict[str,
         await client.post(f"{API}/printers", headers={"X-Station-Key": key}, json=body)
     ).status_code == 403
     assert (await client.get(f"{API}/printers")).status_code == 401
+
+
+async def test_printer_host_private_only(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """DEF-QA2-S1-012 / D45: 사설 대역만. 위반 422 BAD_PRINTER_HOST."""
+    ok_hosts = ["10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.0.50", "127.0.0.1", "localhost"]
+    bad_hosts = ["8.8.8.8", "172.32.0.1", "203.0.113.5", "2001:db8::1", "no-such-host.invalid"]
+    for h in ok_hosts:
+        res = await client.post(
+            f"{API}/printers",
+            headers=admin_headers,
+            json={"id": uniq("LP-H"), "name": "x", "host": h, "purpose": "PACKING"},
+        )
+        assert res.status_code == 201, (h, res.text)
+    pid = res.json()["id"]
+    for h in bad_hosts:
+        res = await client.post(
+            f"{API}/printers",
+            headers=admin_headers,
+            json={"id": uniq("LP-B"), "name": "x", "host": h, "purpose": "PACKING"},
+        )
+        assert res.status_code == 422 and res.json()["code"] == "BAD_PRINTER_HOST", (h, res.text)
+        assert res.json()["detail"][0]["loc"] == ["body", "host"]
+    res = await client.patch(
+        f"{API}/printers/{pid}", headers=admin_headers, json={"host": "1.1.1.1"}
+    )
+    assert res.status_code == 422 and res.json()["code"] == "BAD_PRINTER_HOST"
+    res = await client.patch(
+        f"{API}/printers/{pid}", headers=admin_headers, json={"host": "10.0.0.7"}
+    )
+    assert res.status_code == 200 and res.json()["host"] == "10.0.0.7"

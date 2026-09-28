@@ -29,19 +29,26 @@ def qr_url(code: str) -> str:
     return f"{get_settings().public_host.rstrip('/')}/q/{code}?c={make_check(code)}"
 
 
-def qr_png(code: str, ecc: Ecc = "M", px: int = 300, *, url: str | None = None) -> bytes:
-    """QR PNG. ``px`` 는 목표 한 변 픽셀(모듈 배율은 내림) — 최소 1 배율."""
+def qr_png(
+    code: str, ecc: Ecc = "M", px: int = 300, *, url: str | None = None, border: int = 4
+) -> bytes:
+    """QR PNG. ``px`` 는 목표 한 변 픽셀(모듈 배율은 내림) — 최소 1 배율.
+
+    ``border=0`` 은 quiet zone 없는 심볼만 — PDF 는 이걸 30 mm 박스에 넣고 여백은 CSS 로 준다
+    (D50: 심볼 자체가 30 mm).
+    """
     target = url if url is not None else qr_url(code)
     qr = segno.make(target, error=ecc.lower(), micro=False)
-    modules = qr.symbol_size(scale=1, border=4)[0]
+    modules = qr.symbol_size(scale=1, border=border)[0]
     scale = max(1, px // modules)
     buf = io.BytesIO()
-    qr.save(buf, kind="png", scale=scale, border=4)
+    qr.save(buf, kind="png", scale=scale, border=border)
     return buf.getvalue()
 
 
-def qr_png_data_uri(code: str, ecc: Ecc = "M", px: int = 300) -> str:
-    return "data:image/png;base64," + base64.b64encode(qr_png(code, ecc, px)).decode("ascii")
+def qr_png_data_uri(code: str, ecc: Ecc = "M", px: int = 300, *, border: int = 4) -> str:
+    png = qr_png(code, ecc, px, border=border)
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 
 
 def ecc_for_printer(purpose: str | None) -> Ecc:
