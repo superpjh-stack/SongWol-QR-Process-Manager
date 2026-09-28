@@ -1,12 +1,18 @@
 /**
  * 스캔 결과 카드 — WO 요약 (spec §9.2 스캔 결과, B2-07 다음 작업 안내).
  * 액션 버튼(시작/완료·설비 선택)은 화면이 `children`(footer 슬롯)으로 넣는다.
+ *
+ * `variant` 를 주면 상단에 결과 띠(색+아이콘+문구, §0.7)가 붙는다 — ok/warn/approval/reject 는 기존
+ * 9종 상태색(done/warn/error)을 그대로 재사용하고, saved(오프라인 저장)는 새 CSS 토큰을 만들지 않고
+ * 기존 회색 계열(skipped tone)을 재사용했다(디자인 에이전트 권한 밖 — tokens.css 는 건드리지 않는다).
+ * `autoDismissMs` 를 주면 원형 카운트다운 후 `onDismiss` 를 부른다(OK·saved 는 2000ms, 그 외는 생략해
+ * 탭까지 유지한다 — spec §0.7).
  */
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { cn } from '../cn'
-import { IconImage } from '../icons'
+import { IconCheck, IconImage, IconKey, IconSave, IconWarning, IconX } from '../icons'
 import { StatusBadge } from '../StatusBadge'
-import type { StepStatus, WoStatus } from '../status'
+import { TONE_CLASS, type StatusTone, type StepStatus, type WoStatus } from '../status'
 
 export type ScanResultWo = {
   code: string
@@ -32,8 +38,61 @@ export type ScanResultWo = {
   dueDate?: string | undefined
 }
 
+/** api-contract §3.3 result × requires_approval × 오프라인 4+1 분기 (§0.7) */
+export type ScanResultVariant = 'ok' | 'warn' | 'approval' | 'reject' | 'saved'
+
+const VARIANT_META: Record<ScanResultVariant, { tone: StatusTone; Icon: ComponentType<{ size?: number | string; className?: string }>; title: string }> = {
+  ok: { tone: 'done', Icon: IconCheck, title: '완료' },
+  warn: { tone: 'warn', Icon: IconWarning, title: '확인이 필요합니다' },
+  approval: { tone: 'warn', Icon: IconKey, title: '반장 승인 필요' },
+  reject: { tone: 'error', Icon: IconX, title: '반영되지 않았습니다' },
+  saved: { tone: 'skipped', Icon: IconSave, title: '저장됨 (미전송)' },
+}
+
+function CountdownRing({ ms, onComplete, className }: { ms: number; onComplete?: (() => void) | undefined; className?: string | undefined }) {
+  const [go, setGo] = useState(false)
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setGo(true))
+    const t = window.setTimeout(() => onComplete?.(), ms)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.clearTimeout(t)
+    }
+    // ms·onComplete 는 마운트 시점 값으로 고정 — 카드가 다시 뜨면 key 를 바꿔 새로 마운트한다
+  }, [])
+  const r = 18
+  const c = 2 * Math.PI * r
+  return (
+    <svg width={44} height={44} viewBox="0 0 44 44" className={className} aria-hidden="true">
+      <circle cx={22} cy={22} r={r} fill="none" stroke="currentColor" strokeOpacity={0.25} strokeWidth={4} />
+      <circle
+        cx={22}
+        cy={22}
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={4}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={go ? c : 0}
+        style={{ transition: `stroke-dashoffset ${ms}ms linear` }}
+        transform="rotate(-90 22 22)"
+      />
+    </svg>
+  )
+}
+
 export type ScanResultCardProps = {
   wo: ScanResultWo
+  /** 결과 색 변형 (§0.7). 생략하면 기존처럼 중립 카드만 그린다 */
+  variant?: ScanResultVariant
+  /** ScanResponse.message 그대로 — 작업자용 한국어 문구를 그대로 보여준다 */
+  message?: string
+  /** ScanResponse.warnings[] — 주황 줄로 각각 나열 */
+  warnings?: string[]
+  /** OK·saved 는 2000, 그 외 undefined 로 두면 탭까지 유지된다 (§0.7) */
+  autoDismissMs?: number
+  onDismiss?: () => void
   /** 하단 액션 슬롯 */
   children?: ReactNode
   className?: string
@@ -48,13 +107,37 @@ function Row({ k, v }: { k: string; v: ReactNode }) {
   )
 }
 
-export function ScanResultCard({ wo, children, className }: ScanResultCardProps) {
+export function ScanResultCard({ wo, variant, message, warnings, autoDismissMs, onDismiss, children, className }: ScanResultCardProps) {
+  const meta = variant ? VARIANT_META[variant] : null
   return (
     <section
       className={cn('flex flex-col gap-4 rounded-sf border-2 border-line bg-surface p-5 shadow-card', className)}
       data-component="ScanResultCard"
+      data-variant={variant}
       aria-label={`작업지시 ${wo.code}`}
     >
+      {meta ? (
+        <div
+          className={cn('flex items-center gap-3 rounded-sf px-4 py-3', TONE_CLASS[meta.tone])}
+          role={variant === 'reject' ? 'alert' : 'status'}
+          aria-live={variant === 'reject' ? 'assertive' : 'polite'}
+        >
+          <meta.Icon size={32} className="shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sf-lg font-bold">{meta.title}</div>
+            {message ? <div className="text-sf-body">{message}</div> : null}
+            {warnings && warnings.length > 0 ? (
+              <ul className="mt-1 list-inside list-disc text-sf-body">
+                {warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+          {autoDismissMs !== undefined ? <CountdownRing key={autoDismissMs} ms={autoDismissMs} onComplete={onDismiss} className="shrink-0" /> : null}
+        </div>
+      ) : null}
+
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="font-mono text-sf-xl font-bold tracking-tight">{wo.code}</div>
         <div className="flex flex-wrap gap-2">

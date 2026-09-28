@@ -241,3 +241,13 @@ export const IconRefresh = (p: IconProps) =>
       <path d="M20 4v5h-5" />
     </>,
   )
+/** 저장됨(오프라인 미전송) — ScanResultCard variant="saved", design-tokens.md §5.5 */
+export const IconSave = (p: IconProps) =>
+  base(
+    p,
+    <>
+      <path d="M5 4h11l3 3v13H5z" />
+      <path d="M8 4v6h7V4" />
+      <path d="M8 21v-7h8v7" />
+    </>,
+  )

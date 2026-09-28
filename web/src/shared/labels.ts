@@ -7,6 +7,7 @@ import type {
   ApprovalStatus,
   EquipType,
   ImportEntity,
+  Inspection,
   LabelType,
   LotStatus,
   MigrationSource,
@@ -16,6 +17,7 @@ import type {
   Role,
   ScanAction,
   ScanResult,
+  ShipmentStatus,
   SoStatus,
   StationType,
   TargetType,
@@ -101,6 +103,20 @@ export const VarianceReasonLabel: Record<VarianceReasonCode, string> = {
 }
 
 export const ActiveLabel = { true: '활성', false: '비활성' } as const
+
+/** spec §2.2 P20 검수결과 3버튼 (PDA-12, TriChoice) */
+export const InspectionLabel: Record<Inspection, string> = {
+  PASS: '합격',
+  COND: '조건부',
+  FAIL: '불합격',
+}
+
+/** ※ 기본값 — spec 은 발송 상태 문구를 정하지 않음. ts-types §8 ShipmentStatus */
+export const ShipmentStatusLabel: Record<ShipmentStatus, string> = {
+  READY: '발송 대기',
+  SHIPPED: '발송 완료',
+  DELIVERED: '배송 완료',
+}
 
 /** ※ 기본값 — sales_order.status (db-schema §3.1, spec §2.3 에 없음 F10) */
 export const SoStatusLabel: Record<SoStatus, string> = {

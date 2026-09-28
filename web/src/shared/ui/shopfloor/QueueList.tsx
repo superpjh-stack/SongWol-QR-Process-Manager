@@ -27,6 +27,8 @@ export type QueueListProps = {
   today?: string
   onSelect?: (item: QueueItem) => void
   emptyText?: string
+  /** 오프라인 캐시로 보여주는 중이면 마지막 성공 조회 시각(ISO). 있으면 "hh:mm 기준" 을 상단에 표시 (§0.6) */
+  staleAt?: string
   className?: string
 }
 
@@ -34,20 +36,37 @@ function todayKst(): string {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date())
 }
 
-export function QueueList({ items, limit = 8, today, onSelect, emptyText = '대기 중인 작업이 없습니다', className }: QueueListProps) {
+function fmtHm(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' }).format(new Date(iso))
+  } catch {
+    return iso
+  }
+}
+
+export function QueueList({ items, limit = 8, today, onSelect, emptyText = '대기 중인 작업이 없습니다', staleAt, className }: QueueListProps) {
   const base = today ?? todayKst()
   const sorted = [...items].sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.code.localeCompare(b.code)).slice(0, limit)
 
+  const staleNote = staleAt ? (
+    <p className="mb-2 flex items-center gap-2 text-sf-body text-ink-muted" data-component="QueueList-stale">
+      {fmtHm(staleAt)} 기준 — 오프라인 캐시
+    </p>
+  ) : null
+
   if (sorted.length === 0) {
     return (
-      <div className={cn('rounded-sf border-2 border-dashed border-line p-6 text-center text-sf-lg text-ink-muted', className)}>
-        {emptyText}
+      <div className={className}>
+        {staleNote}
+        <div className="rounded-sf border-2 border-dashed border-line p-6 text-center text-sf-lg text-ink-muted">{emptyText}</div>
       </div>
     )
   }
 
   return (
-    <ol className={cn('flex flex-col gap-2', className)} data-component="QueueList">
+    <div className={className}>
+      {staleNote}
+      <ol className="flex flex-col gap-2" data-component="QueueList">
       {sorted.map((it, i) => {
         const late = it.isLate ?? it.dueDate < base
         const Tag = onSelect ? 'button' : 'div'
@@ -86,6 +105,7 @@ export function QueueList({ items, limit = 8, today, onSelect, emptyText = '대�
           </li>
         )
       })}
-    </ol>
+      </ol>
+    </div>
   )
 }

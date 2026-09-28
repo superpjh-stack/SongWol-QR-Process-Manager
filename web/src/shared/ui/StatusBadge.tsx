@@ -7,23 +7,27 @@ import {
   ACTIVE_STATUS,
   APPROVAL_STATUS,
   DELAY_RISK,
+  INSPECTION_STATUS,
   LOT_STATUS,
   MIGRATION_SOURCE,
   MIGRATION_STATUS,
   RECEIPT_STATUS,
   ROLE_STATUS,
   SCAN_RESULT,
+  SHIPMENT_STATUS,
   SO_STATUS,
   STEP_STATUS,
   TONE_CLASS,
   WO_STATUS,
   type ApprovalStatus,
+  type Inspection,
   type LotStatus,
   type MigrationSource,
   type MigrationStatus,
   type ReceiptStatus,
   type Role,
   type ScanResult,
+  type ShipmentStatus,
   type SoStatus,
   type StatusMeta,
   type StepStatus,
@@ -45,6 +49,8 @@ export type StatusBadgeProps = (
   | { kind: 'approval'; status: ApprovalStatus }
   | { kind: 'lot'; status: LotStatus }
   | { kind: 'delay'; status: true }
+  | { kind: 'inspection'; status: Inspection }
+  | { kind: 'shipment'; status: ShipmentStatus }
 ) & {
   /** 기본 'admin' */
   density?: Density | undefined
@@ -79,6 +85,10 @@ function metaOf(p: StatusBadgeProps): StatusMeta {
       return LOT_STATUS[p.status]
     case 'delay':
       return DELAY_RISK
+    case 'inspection':
+      return INSPECTION_STATUS[p.status]
+    case 'shipment':
+      return SHIPMENT_STATUS[p.status]
   }
 }
 

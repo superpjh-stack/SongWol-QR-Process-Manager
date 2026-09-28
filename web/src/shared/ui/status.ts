@@ -29,9 +29,35 @@ import {
 } from './icons'
 
 /** 상태 타입은 contracts/ts-types.md (shared/types) 의 것을 그대로 re-export 한다 (값 동일). */
-export type { WoStatus, StepStatus, ReceiptStatus, MigrationStatus, MigrationSource, Role, SoStatus, ScanResult, ApprovalStatus, LotStatus } from '../types'
-import type { ApprovalStatus, LotStatus, MigrationSource, MigrationStatus, ReceiptStatus, Role, ScanResult, SoStatus, StepStatus, WoStatus } from '../types'
-import { ApprovalStatusLabel, LotStatusLabel, MigrationSourceLabel, MigrationStatusLabel, RoleLabel, ScanResultLabel, SoStatusLabel } from '../labels'
+export type {
+  WoStatus,
+  StepStatus,
+  ReceiptStatus,
+  MigrationStatus,
+  MigrationSource,
+  Role,
+  SoStatus,
+  ScanResult,
+  ApprovalStatus,
+  LotStatus,
+  Inspection,
+  ShipmentStatus,
+} from '../types'
+import type {
+  ApprovalStatus,
+  Inspection,
+  LotStatus,
+  MigrationSource,
+  MigrationStatus,
+  ReceiptStatus,
+  Role,
+  ScanResult,
+  ShipmentStatus,
+  SoStatus,
+  StepStatus,
+  WoStatus,
+} from '../types'
+import { ApprovalStatusLabel, InspectionLabel, LotStatusLabel, MigrationSourceLabel, MigrationStatusLabel, RoleLabel, ScanResultLabel, ShipmentStatusLabel, SoStatusLabel } from '../labels'
 
 /** 의미색 키. tokens.css 의 --color-status-<tone>-* 와 1:1 */
 export type StatusTone =
@@ -157,3 +183,18 @@ export const LOT_STATUS: Record<LotStatus, StatusMeta> = {
 
 /** 지연 위험 (delay_risk) — 배지 하나로 표시 */
 export const DELAY_RISK: StatusMeta = { label: '지연 위험', tone: 'warn', Icon: IconWarning }
+
+/** 검수결과 (spec §2.2 P20 「합격 PASS / 조건부 COND / 불합격 FAIL」, PDA-12 TriChoice) */
+export const INSPECTION_STATUS: Record<Inspection, StatusMeta> = {
+  PASS: { label: InspectionLabel.PASS, tone: 'done', Icon: IconCheck },
+  COND: { label: InspectionLabel.COND, tone: 'partial', Icon: IconHalf },
+  FAIL: { label: InspectionLabel.FAIL, tone: 'error', Icon: IconX },
+}
+export const INSPECTION_STATUS_VALUES = Object.keys(INSPECTION_STATUS) as Inspection[]
+
+/** 발송 상태 (ts-types §8 ShipmentStatus). ※ 색·문구는 기본값 — spec 은 정하지 않음 */
+export const SHIPMENT_STATUS: Record<ShipmentStatus, StatusMeta> = {
+  READY: { label: ShipmentStatusLabel.READY, tone: 'waiting', Icon: IconBox },
+  SHIPPED: { label: ShipmentStatusLabel.SHIPPED, tone: 'done', Icon: IconTruck },
+  DELIVERED: { label: ShipmentStatusLabel.DELIVERED, tone: 'done', Icon: IconCheck },
+}
