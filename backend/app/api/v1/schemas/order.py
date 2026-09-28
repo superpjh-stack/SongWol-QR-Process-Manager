@@ -258,6 +258,24 @@ class SoCancelResponse(ApiModel):
     pending_wo: list[WorkOrderSummary]
 
 
+# ---- 스캔 대기열 (ts-types §6 QueueItem/QueueResponse — WorkOrderSummary 참조 때문에 여기 둔다,
+# ---- scan.py 는 order.py 를 임포트할 수 없다: order.py 가 이미 scan.py 를 임포트한다 §7.6) ----
+class QueueItem(ApiModel):
+    wo: WorkOrderSummary
+    step_status: StepStatus
+    qty_in: int
+    waiting_hours: float
+    due_date: date
+    delay_risk: bool
+
+
+class QueueResponse(ApiModel):
+    process_code: str
+    process_name: str
+    items: list[QueueItem]
+    pending_approvals: int
+
+
 # ---- QR 착지 (api-contract §10 · §13.4 admin #30/#31) ----
 class QrLanding(ApiModel):
     """summary 는 type 별 SalesOrderSummary | WorkOrderSummary | PackBoxSummary | InboundLot |
