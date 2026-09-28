@@ -5,6 +5,7 @@ import { RequireRole } from './guards'
 import type { ScreenKey } from './permissions'
 import { LoginPage } from './pages/LoginPage'
 import { NotReady } from './pages/NotReady'
+import { DashboardPage } from './pages/DashboardPage'
 import { CustomersPage } from './pages/master/CustomersPage'
 import { CustomerDetailPage } from './pages/master/CustomerDetailPage'
 import { ItemsPage } from './pages/master/ItemsPage'
@@ -34,6 +35,9 @@ import { VendorBarcodesPage } from './pages/material/VendorBarcodesPage'
 import { ShippingPage } from './pages/shipping/ShippingPage'
 import { ShipmentFormPage } from './pages/shipping/ShipmentFormPage'
 import { DailyReportPage } from './pages/shipping/DailyReportPage'
+import { OutputReportPage } from './pages/reports/OutputReportPage'
+import { NotificationsPage } from './pages/system/NotificationsPage'
+import { AuditLogPage } from './pages/system/AuditLogPage'
 
 const guard = (screen: ScreenKey, el: React.ReactNode) => <RequireRole screen={screen}>{el}</RequireRole>
 const later = (screen: ScreenKey, id: string, title: string, sprint: string) => guard(screen, <NotReady id={id} title={title} sprint={sprint} />)
@@ -44,7 +48,7 @@ export const adminRoute: RouteObject = {
   path: '/admin',
   element: <AdminLayout />,
   children: [
-    { index: true, element: later('dashboard', 'ADM-28', '대시보드', '[S4-2]') },
+    { index: true, element: guard('dashboard', <DashboardPage />) },
     { path: 'so', element: guard('so', <SalesOrdersPage />) },
     { path: 'so/new', element: guard('so', <SalesOrderFormPage />) },
     { path: 'so/:code/edit', element: guard('so', <SalesOrderFormPage />) },
@@ -60,7 +64,7 @@ export const adminRoute: RouteObject = {
     { path: 'shipping', element: guard('shipping', <ShippingPage />) },
     { path: 'shipping/new', element: guard('shipping.new', <ShipmentFormPage />) },
     { path: 'shipping/daily', element: guard('shipping', <DailyReportPage />) },
-    { path: 'reports/output', element: later('reports', 'ADM-25', '실적 집계', '[S4-4]') },
+    { path: 'reports/output', element: guard('reports', <OutputReportPage />) },
     { path: 'reports/lead-time', element: later('reports', 'ADM-26', '리드타임 분석', '[S7-4] [확장]') },
     { path: 'trace', element: later('trace', 'ADM-27', 'LOT 역추적', '[S7-3] [확장]') },
     { path: 'master/customers', element: guard('master.customers', <CustomersPage />) },
@@ -77,8 +81,8 @@ export const adminRoute: RouteObject = {
     { path: 'master/labels', element: guard('master.labels', <LabelsPage />) },
     { path: 'master/codes', element: guard('master.codes', <CodeSettingsPage />) },
     { path: 'master/import', element: guard('master.import', <ImportPage />) },
-    { path: 'system/notifications', element: later('system.notifications', 'ADM-29', '알림 이력', '[S4-8]') },
-    { path: 'system/audit', element: later('system.audit', 'ADM-30', '감사 로그', '[S4-8]') },
+    { path: 'system/notifications', element: guard('system.notifications', <NotificationsPage />) },
+    { path: 'system/audit', element: guard('system.audit', <AuditLogPage />) },
     { path: 'system/migration', element: guard('system.migration', <MigrationBatchesPage />) },
     { path: '*', element: <NotReady id="—" title="화면 없음" sprint="URL 표(screens-admin §0.1)에 없는 경로" /> },
   ],

@@ -193,6 +193,10 @@ export interface ReworkResponse {
 export interface ReasonRequest {
   reason: string
 }
+/** POST /wo/{id}/events/{event_uuid}/cancel (E6, admin #28 [S4]). JWT MANAGER/ADMIN 전용 — 승인 즉시 반영 */
+export interface WoEventCancelRequest {
+  reason: string
+}
 export interface SoCancelResponse {
   so: SalesOrder
   cancelled_wo: string[]

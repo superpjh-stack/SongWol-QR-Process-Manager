@@ -1,5 +1,5 @@
 /** 기준정보 — contracts/ts-types.md §4 (+§12 델타) */
-import type { EquipType, ImportEntity, LabelType, MigrationSource, PrintMethodCode, ProcessCode, RequiredInput, Role, StationType } from './enums'
+import type { EquipType, ImportEntity, LabelType, MigrationSource, OfflineState, PrintMethodCode, ProcessCode, RequiredInput, Role, StationType } from './enums'
 import type { LabelJob } from './order'
 
 export interface Customer {
@@ -238,7 +238,7 @@ export interface Station {
   last_seen_at: string | null
   active: boolean
   printer_id: string | null
-  offline_state: 'ONLINE' | 'WARN' | 'ERROR'
+  offline_state: OfflineState
 } // printer_id ②, offline_state #14
 export interface StationCreate {
   id: string

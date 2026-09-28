@@ -5,12 +5,16 @@
 import type {
   AllowedAction,
   ApprovalStatus,
+  AuditAction,
   EquipType,
   ImportEntity,
   Inspection,
   LabelType,
   LotStatus,
   MigrationStatus,
+  NotificationChannel,
+  NotificationType,
+  OfflineState,
   PrintMethodCode,
   RequiredInput,
   Role,
@@ -187,4 +191,38 @@ export const AllowedActionLabel: Record<AllowedAction, string> = {
   APPROVE_PENDING: '예외 승인',
   QUARANTINE: '격리',
   SHIP: '발송',
+}
+
+/** screens-admin ADM-29 「DELAY/DEFECT/RECEIPT_SHORT/QTY_VARIANCE/APPROVAL_REQUEST/OFFLINE_BACKLOG 한글」. ※ 문구는 기본값 */
+export const NotificationTypeLabel: Record<NotificationType, string> = {
+  DELAY: '지연',
+  DEFECT: '불량',
+  RECEIPT_SHORT: '입고 부족',
+  QTY_VARIANCE: '수량 차이',
+  APPROVAL_REQUEST: '승인 요청',
+  OFFLINE_BACKLOG: '오프라인 적체',
+}
+
+/** screens-admin ADM-29 「KAKAO/SMS/PUSH/EMAIL/INAPP」. ※ 문구는 기본값 */
+export const NotificationChannelLabel: Record<NotificationChannel, string> = {
+  KAKAO: '카카오톡',
+  SMS: 'SMS',
+  PUSH: '푸시',
+  EMAIL: '이메일',
+  INAPP: '인앱',
+}
+
+/** admin #14 [S4] station.offline_state. ※ 문구는 기본값 */
+export const OfflineStateLabel: Record<OfflineState, string> = {
+  ONLINE: '온라인',
+  WARN: '접속 지연',
+  ERROR: '오프라인',
+}
+
+/** ADM-30 audit_log.action. ※ 문구는 기본값 */
+export const AuditActionLabel: Record<AuditAction, string> = {
+  INSERT: '등록',
+  UPDATE: '수정',
+  DELETE: '삭제',
+  APPROVE: '승인',
 }

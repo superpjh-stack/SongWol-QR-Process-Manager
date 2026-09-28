@@ -1,8 +1,10 @@
 /**
- * ADM-16 WO 상세 — S1 범위: 헤더(ADM-15 컬럼 전부 + hold_reason·closed_at·도안·parent/children) · 보류/재개/취소/종결(ReasonDialog·409 인라인)
+ * ADM-16 WO 상세 — 헤더(ADM-15 컬럼 전부 + hold_reason·closed_at·도안·parent/children) · 보류/재개/취소/종결(ReasonDialog·409 인라인)
  * · 라벨 재출력(WO_LABEL = POST /labels/print 프린터 선택 · WORK_ORDER_PDF = POST /wo/{id}/reprint → pdf_url) · 작업지시서 PDF
- * 탭: 단계 타임라인(Timeline) · 이벤트 로그(recent_events → GET /wo/{id}/events) · 발행 이력(GET /labels/issues?target_code=)
- * 분할·재작업·승인은 [S3-3]·[S4-6]·[S2-3]
+ * · 하위 WO 분할(E4, POST /wo/{id}/split) [S3-3] · 재작업(E3, POST /wo/{id}/rework) [S4-6]
+ * 탭: 단계 타임라인(Timeline) · 이벤트 로그(recent_events → GET /wo/{id}/events, 행별 [취소] = E6 관리자 웹 발의
+ * `POST /wo/{id}/events/{event_uuid}/cancel`, JWT MANAGER/ADMIN [S4]) · 발행 이력(GET /labels/issues?target_code=)
+ * 예외 승인은 [S2-3] (ADM-17 로 분리)
  */
 import { useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
@@ -10,11 +12,12 @@ import { Button, DataTable, DescriptionList, ErrorAlert, Modal, NumberInput, Pag
 import { StatusBadge } from '@/shared/ui'
 import { useApiMutation, useApiQuery, useArray, useAuth } from '@/shared/hooks'
 import { ApiError, labelsApi, pdfApi, woApi } from '@/shared/api'
-import type { LabelIssue, LabelJob, Page, Printer, Process, ScanEventSummary, WorkOrderDetail } from '@/shared/types'
+import type { LabelIssue, LabelJob, Page, Printer, Process, ReworkResponse, ScanEventSummary, SplitResponse, WorkOrderDetail } from '@/shared/types'
 import { LabelTypeLabel, PrintMethodCodeLabel, ScanActionLabel, TargetTypeLabel } from '@/shared/labels'
 import { formatDate, formatDateTime, formatQty, isOverdue } from '../../format'
 import { canWrite } from '../../permissions'
-import { ApiErrorAlert, AuthImage, CodeText, ConfirmDialog, RadioGroup, ReasonDialog } from '../../components'
+import { ApiErrorAlert, AuthImage, CodeText, Checkbox, ConfirmDialog, RadioGroup, ReasonDialog, REASON_MAX, Textarea } from '../../components'
+import { canCancelEvent, cancelledEventUuids } from './eventCancel'
 import { processNameFn } from './woColumns'
 
 type Tab = 'timeline' | 'events' | 'issues'
@@ -109,8 +112,134 @@ function ReprintModal({ wo, open, onClose }: { wo: WorkOrderDetail; open: boolea
   )
 }
 
+/* ───────── 하위 WO 분할 (E4, [S3-3]) ───────── */
+function SplitModal({ wo, open, onClose, onDone }: { wo: WorkOrderDetail; open: boolean; onClose: () => void; onDone: (res: SplitResponse) => void }) {
+  const [qty, setQty] = useState(1)
+  const [reason, setReason] = useState('')
+  const [touched, setTouched] = useState(false)
+  const split = useApiMutation((body: { qty: number; reason: string }) => woApi.split(wo.id, body))
+  const reset = () => {
+    setQty(1)
+    setReason('')
+    setTouched(false)
+    split.reset()
+  }
+  const trimmed = reason.trim()
+  const qtyErr = qty < 1 || qty >= wo.qty_ordered ? `1 이상 ${wo.qty_ordered - 1} 이하로 입력하세요` : undefined
+  const reasonErr = touched && trimmed.length === 0 ? '사유를 입력하세요' : trimmed.length > REASON_MAX ? `${REASON_MAX}자 이하로 입력하세요` : undefined
+  return (
+    <Modal
+      open={open}
+      title={`하위 WO 분할 — ${wo.code}`}
+      onClose={() => {
+        reset()
+        onClose()
+      }}
+      dismissible={!split.loading}
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => { reset(); onClose() }} disabled={split.loading}>
+            취소
+          </Button>
+          <Button
+            variant="primary"
+            loading={split.loading}
+            onClick={() => {
+              setTouched(true)
+              if (qtyErr || trimmed.length === 0 || trimmed.length > REASON_MAX) return
+              void split
+                .mutate({ qty, reason: trimmed })
+                .then((res) => {
+                  reset()
+                  onDone(res)
+                })
+                .catch(() => undefined)
+            }}
+          >
+            분할
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {split.error ? <ApiErrorAlert error={split.error} /> : null}
+        <p className="text-ad-xs text-ink-muted">
+          지시 수량 {formatQty(wo.qty_ordered)} 중 일부를 새 하위 WO 로 분리합니다. 26개 초과 시 409 SPLIT_LIMIT.
+        </p>
+        <NumberInput label="분할 수량" required min={1} max={wo.qty_ordered - 1} value={qty} onChange={(e) => setQty(Number(e.target.value) || 0)} error={qtyErr} />
+        <Textarea label="사유" required maxLength={REASON_MAX} value={reason} error={reasonErr} onBlur={() => setTouched(true)} onChange={(e) => setReason(e.target.value)} hint={`${trimmed.length}/${REASON_MAX}`} />
+      </div>
+    </Modal>
+  )
+}
+
+/* ───────── 재작업 (E3, [S4-6]) ───────── */
+function ReworkModal({ wo, open, onClose, onDone }: { wo: WorkOrderDetail; open: boolean; onClose: () => void; onDone: (res: ReworkResponse) => void }) {
+  const [qty, setQty] = useState(1)
+  const [reason, setReason] = useState('')
+  const [reinsertP30, setReinsertP30] = useState(true)
+  const [touched, setTouched] = useState(false)
+  const rework = useApiMutation((body: { qty: number; reason: string; reinsert_p30: boolean }) => woApi.rework(wo.id, body))
+  const reset = () => {
+    setQty(1)
+    setReason('')
+    setReinsertP30(true)
+    setTouched(false)
+    rework.reset()
+  }
+  const trimmed = reason.trim()
+  const qtyErr = wo.qty_bad <= 0 ? '불량 수량이 없습니다' : qty < 1 || qty > wo.qty_bad ? `1 이상 ${wo.qty_bad} 이하로 입력하세요` : undefined
+  const reasonErr = touched && trimmed.length === 0 ? '사유를 입력하세요' : trimmed.length > REASON_MAX ? `${REASON_MAX}자 이하로 입력하세요` : undefined
+  return (
+    <Modal
+      open={open}
+      title={`재작업 — ${wo.code}`}
+      onClose={() => {
+        reset()
+        onClose()
+      }}
+      dismissible={!rework.loading}
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => { reset(); onClose() }} disabled={rework.loading}>
+            취소
+          </Button>
+          <Button
+            variant="primary"
+            loading={rework.loading}
+            disabled={wo.qty_bad <= 0}
+            onClick={() => {
+              setTouched(true)
+              if (qtyErr || trimmed.length === 0 || trimmed.length > REASON_MAX) return
+              void rework
+                .mutate({ qty, reason: trimmed, reinsert_p30: reinsertP30 })
+                .then((res) => {
+                  reset()
+                  onDone(res)
+                })
+                .catch(() => undefined)
+            }}
+          >
+            재작업 등록
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {rework.error ? <ApiErrorAlert error={rework.error} /> : null}
+        <p className="text-ad-xs text-ink-muted">
+          불량 수량 {formatQty(wo.qty_bad)} 중 일부를 재작업 하위 WO 로 분리합니다 (stock_txn REWORK).
+        </p>
+        <NumberInput label="재작업 수량" required min={1} max={Math.max(1, wo.qty_bad)} value={qty} onChange={(e) => setQty(Number(e.target.value) || 0)} error={qtyErr} disabled={wo.qty_bad <= 0} />
+        <Textarea label="사유" required maxLength={REASON_MAX} value={reason} error={reasonErr} onBlur={() => setTouched(true)} onChange={(e) => setReason(e.target.value)} hint={`${trimmed.length}/${REASON_MAX}`} disabled={wo.qty_bad <= 0} />
+        <Checkbox label="재인쇄 가능하면 라우팅 P30 부터 재삽입" checked={reinsertP30} onChange={(e) => setReinsertP30(e.target.checked)} hint="해제 시 P50(포장)부터 — 재인쇄 불가한 경우" disabled={wo.qty_bad <= 0} />
+      </div>
+    </Modal>
+  )
+}
+
 /* ───────── 이벤트 로그 ───────── */
-function eventColumns(): Column<ScanEventSummary>[] {
+function eventColumns(opts: { canCancel: boolean; cancelledUuids: Set<string>; onCancel: (row: ScanEventSummary) => void }): Column<ScanEventSummary>[] {
   return [
     {
       key: 'scanned_at',
@@ -179,19 +308,65 @@ function eventColumns(): Column<ScanEventSummary>[] {
           '—'
         ),
     },
+    {
+      key: '_actions',
+      header: '',
+      render: (r) =>
+        opts.canCancel && canCancelEvent(r, opts.cancelledUuids) ? (
+          <Button size="sm" variant="danger" onClick={() => opts.onCancel(r)}>
+            취소
+          </Button>
+        ) : null,
+    },
   ]
 }
 
-function EventsTab({ wo }: { wo: WorkOrderDetail }) {
+/** E6 관리자 웹 발의 취소 확인 (admin #28 [S4]). JWT 가 곧 승인 — 카드/PIN 없음, reason 필수 */
+function CancelEventDialog({ wo, event, onClose, onDone }: { wo: WorkOrderDetail; event: ScanEventSummary | null; onClose: () => void; onDone: (msg: string) => void }) {
+  const cancel = useApiMutation((reason: string) => woApi.cancelEvent(wo.id, event!.event_uuid, reason))
+  return (
+    <ReasonDialog
+      open={event !== null}
+      title={`이벤트 취소 — ${event?.action ?? ''} ${event ? ScanActionLabel[event.action] : ''}`}
+      danger
+      confirmLabel="취소 확정"
+      loading={cancel.loading}
+      error={cancel.error}
+      onClose={onClose}
+      onConfirm={(reason) =>
+        void cancel
+          .mutate(reason)
+          .then(() => onDone('이벤트가 취소되었습니다'))
+          .catch(() => undefined)
+      }
+    >
+      <p>
+        스캔 시각 {event ? formatDateTime(event.scanned_at, true) : ''} · 대상 <CodeText code={event?.target_code ?? ''} /> · 결과{' '}
+        {event ? <StatusBadge kind="scanResult" status={event.result} /> : null}
+      </p>
+      <p className="text-ad-xs text-ink-muted">JWT 승인이 곧 승인이므로 CANCEL 이벤트를 APPROVED 로 즉시 기록하고 리플레이합니다 (admin #28).</p>
+    </ReasonDialog>
+  )
+}
+
+function EventsTab({ wo, refetchWo }: { wo: WorkOrderDetail; refetchWo: () => Promise<void> }) {
+  const { role } = useAuth()
+  const toast = useToast()
+  const canCancel = role === 'MANAGER' || role === 'ADMIN'
   const [all, setAll] = useState(false)
   const [page, setPage] = useState(1)
   const size = 50
   const events = useApiQuery<Page<ScanEventSummary>>(['res', 'wo', wo.id, 'events', page, size], () => woApi.events(wo.id, { page, size }), all)
-  const cols = useMemo(eventColumns, [])
+  const [target, setTarget] = useState<ScanEventSummary | null>(null)
+  const allRows: ScanEventSummary[] = all ? (events.data?.items ?? []) : wo.recent_events
+  const cancelledUuids = useMemo(() => cancelledEventUuids(allRows), [allRows])
+  const cols = useMemo(() => eventColumns({ canCancel, cancelledUuids, onCancel: setTarget }), [canCancel, cancelledUuids])
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <p className="text-ad-xs text-ink-muted">{all ? '전체 이벤트 (GET /wo/{id}/events)' : `최근 이벤트 ${wo.recent_events.length}건 (recent_events)`} · PENDING 승인·E6 취소 발의는 [S2-3]·[S4]</p>
+        <p className="text-ad-xs text-ink-muted">
+          {all ? '전체 이벤트 (GET /wo/{id}/events)' : `최근 이벤트 ${wo.recent_events.length}건 (recent_events)`} · PENDING 승인은 [S2-3, ADM-17] · 행별 [취소]는 E6 (admin #28, MANAGER/ADMIN)
+        </p>
         {!all ? (
           <Button size="sm" variant="secondary" onClick={() => setAll(true)}>
             전체 보기
@@ -212,6 +387,17 @@ function EventsTab({ wo }: { wo: WorkOrderDetail }) {
       ) : (
         <DataTable<ScanEventSummary> columns={cols} rows={wo.recent_events} rowKey={(r) => r.event_uuid} pageSize={0} emptyText="스캔 이벤트가 없습니다 (키오스크 스캔은 S2)" dense />
       )}
+      <CancelEventDialog
+        wo={wo}
+        event={target}
+        onClose={() => setTarget(null)}
+        onDone={(msg) => {
+          toast.success(msg)
+          setTarget(null)
+          void events.refetch()
+          void refetchWo()
+        }}
+      />
     </div>
   )
 }
@@ -274,6 +460,8 @@ function Detail({ wo, refetch }: { wo: WorkOrderDetail; refetch: () => Promise<v
   const pname = processNameFn(processes.data)
   const [dialog, setDialog] = useState<'hold' | 'resume' | 'cancel' | 'close' | null>(null)
   const [reprintOpen, setReprintOpen] = useState(false)
+  const [splitOpen, setSplitOpen] = useState(false)
+  const [reworkOpen, setReworkOpen] = useState(false)
   const hold = useApiMutation((reason: string) => woApi.hold(wo.id, reason))
   const resume = useApiMutation(() => woApi.resume(wo.id))
   const cancel = useApiMutation((reason: string) => woApi.cancel(wo.id, reason))
@@ -307,6 +495,12 @@ function Detail({ wo, refetch }: { wo: WorkOrderDetail; refetch: () => Promise<v
             <Button disabled={!reprintable || terminal} onClick={() => setReprintOpen(true)}>
               라벨 재출력
             </Button>
+            <Button disabled={!manage || terminal || wo.qty_ordered < 2} title="1 ≤ 수량 < 지시 수량 · 26개 초과 시 409 SPLIT_LIMIT" onClick={() => setSplitOpen(true)}>
+              분할
+            </Button>
+            <Button disabled={!manage || terminal || wo.qty_bad <= 0} title="불량 수량이 있어야 재작업 가능" onClick={() => setReworkOpen(true)}>
+              재작업
+            </Button>
             {s === 'ON_HOLD' ? (
               <Button variant="primary" disabled={!manage} onClick={() => setDialog('resume')}>
                 재개
@@ -326,7 +520,7 @@ function Detail({ wo, refetch }: { wo: WorkOrderDetail; refetch: () => Promise<v
         }
       />
       {pdf.error ? <ApiErrorAlert error={pdf.error} onRetry={() => void pdf.mutate(undefined).catch(() => undefined)} className="mb-3" /> : null}
-      <p className="mb-3 text-ad-xs text-ink-muted">하위 WO 분할 [S3-3] · 재작업 [S4-6] · 예외 승인 [S2-3]</p>
+      <p className="mb-3 text-ad-xs text-ink-muted">예외 승인 대기는 별도 화면 → <Link to="/admin/wo/pending" className="text-brand-700 hover:underline">ADM-17</Link></p>
       <section className="mb-4 flex flex-col gap-4 rounded-ad border border-line bg-surface p-4 lg:flex-row">
         <div className="shrink-0">
           {wo.design_thumbnail_url ? (
@@ -393,7 +587,7 @@ function Detail({ wo, refetch }: { wo: WorkOrderDetail; refetch: () => Promise<v
         value={tab}
         onChange={setTab}
       >
-        {tab === 'timeline' ? <Timeline steps={wo.steps} formatDateTime={formatDateTime} formatQty={formatQty} /> : tab === 'events' ? <EventsTab wo={wo} /> : <IssuesTab wo={wo} />}
+        {tab === 'timeline' ? <Timeline steps={wo.steps} formatDateTime={formatDateTime} formatQty={formatQty} /> : tab === 'events' ? <EventsTab wo={wo} refetchWo={refetch} /> : <IssuesTab wo={wo} />}
       </Tabs>
 
       <ReasonDialog
@@ -432,6 +626,26 @@ function Detail({ wo, refetch }: { wo: WorkOrderDetail; refetch: () => Promise<v
         </p>
       </ConfirmDialog>
       <ReprintModal wo={wo} open={reprintOpen} onClose={() => setReprintOpen(false)} />
+      <SplitModal
+        wo={wo}
+        open={splitOpen}
+        onClose={() => setSplitOpen(false)}
+        onDone={(res) => {
+          setSplitOpen(false)
+          toast.success(`분할되었습니다 — 하위 WO ${res.child.code}`)
+          void refetch()
+        }}
+      />
+      <ReworkModal
+        wo={wo}
+        open={reworkOpen}
+        onClose={() => setReworkOpen(false)}
+        onDone={(res) => {
+          setReworkOpen(false)
+          toast.success(`재작업 하위 WO ${res.child.code} 등록되었습니다`)
+          void refetch()
+        }}
+      />
     </>
   )
 }

@@ -3,10 +3,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Button, DataTable, Input, Modal, PageHeader, Select, useToast, type Column } from '@/shared/ui/admin'
-import { useApiMutation, useArray, useAuth, useList, useUpdate } from '@/shared/hooks'
-import { stationsApi } from '@/shared/api'
-import { STATION_TYPES, type Process, type Station, type StationCreate, type StationCreated, type StationKeyRotated, type StationUpdate } from '@/shared/types'
+import { Button, DataTable, Input, Modal, NumberInput, PageHeader, Select, StatusBadge, useToast, type Column } from '@/shared/ui/admin'
+import { useApiMutation, useApiQuery, useArray, useAuth, useList, useUpdate } from '@/shared/hooks'
+import { stationOfflineApi, stationsApi } from '@/shared/api'
+import { STATION_TYPES, type Process, type Station, type StationCreate, type StationCreated, type StationKeyRotated, type StationOfflineThreshold, type StationUpdate } from '@/shared/types'
 import { StationTypeLabel } from '@/shared/labels'
 import { formatDateTime, relativeTime } from '../../format'
 import { canWrite } from '../../permissions'
@@ -141,6 +141,76 @@ function StationFormModal({ open, initial, processes, onClose, onSaved }: { open
   )
 }
 
+/** 단말 미접속 임계값 (admin #14 [S4]). `GET/PUT /settings/station-offline` — 분 단위, ADMIN W · MANAGER R */
+function OfflineSettingsModal({ open, onClose, writable }: { open: boolean; onClose: () => void; writable: boolean }) {
+  const toast = useToast()
+  const settings = useApiQuery<StationOfflineThreshold>(['settings', 'station-offline'], () => stationOfflineApi.get(), open)
+  const [warn, setWarn] = useState(0)
+  const [error, setError] = useState(0)
+  const [touched, setTouched] = useState(false)
+  const put = useApiMutation((body: StationOfflineThreshold) => stationOfflineApi.put(body))
+  useEffect(() => {
+    if (open && settings.data) {
+      setWarn(settings.data.warn_minutes)
+      setError(settings.data.error_minutes)
+      setTouched(false)
+    }
+  }, [open, settings.data])
+  const invalid = warn <= 0 || error <= 0 || error <= warn
+  return (
+    <Modal
+      open={open}
+      title="단말 미접속 임계값"
+      onClose={onClose}
+      dismissible={!put.loading}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={put.loading}>
+            닫기
+          </Button>
+          {writable ? (
+            <Button
+              variant="primary"
+              loading={put.loading}
+              onClick={() => {
+                setTouched(true)
+                if (invalid) return
+                void put
+                  .mutate({ warn_minutes: warn, error_minutes: error })
+                  .then(() => {
+                    toast.success('저장되었습니다')
+                    onClose()
+                  })
+                  .catch(() => undefined)
+              }}
+            >
+              저장
+            </Button>
+          ) : null}
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {settings.error ? <ApiErrorAlert error={settings.error} onRetry={() => void settings.refetch()} /> : null}
+        {put.error ? <ApiErrorAlert error={put.error} /> : null}
+        <p className="text-ad-xs text-ink-muted">
+          마지막 접속(<code>last_seen_at</code>)으로부터 경과 시간이 「주의」 이상이면 offline_state=WARN, 「오프라인」 이상이면 ERROR 로 표시됩니다.
+        </p>
+        <NumberInput label="주의(분)" required min={1} value={warn} onChange={(e) => setWarn(Number(e.target.value) || 0)} disabled={!writable} error={touched && warn <= 0 ? '1 이상 입력하세요' : undefined} />
+        <NumberInput
+          label="오프라인(분)"
+          required
+          min={1}
+          value={error}
+          onChange={(e) => setError(Number(e.target.value) || 0)}
+          disabled={!writable}
+          error={touched && (error <= 0 ? '1 이상 입력하세요' : error <= warn ? '주의(분)보다 커야 합니다' : undefined)}
+        />
+      </div>
+    </Modal>
+  )
+}
+
 export function StationsPage() {
   const { role } = useAuth()
   const write = canWrite(role, 'master.stations')
@@ -155,6 +225,7 @@ export function StationsPage() {
   const [toggling, setToggling] = useState<Station | null>(null)
   const [rotating, setRotating] = useState<Station | null>(null)
   const [secret, setSecret] = useState<Secret | null>(null)
+  const [offlineSettingsOpen, setOfflineSettingsOpen] = useState(false)
 
   const columns: Column<Station>[] = [
     { key: 'id', header: '단말 ID', sortable: true, render: (r) => <CodeText code={r.id} className={r.active ? '' : 'text-ink-faint'} /> },
@@ -173,6 +244,7 @@ export function StationsPage() {
       ),
     },
     { key: 'active', header: '활성', render: (r) => <ActiveBadge active={r.active} /> },
+    { key: 'offline_state', header: '접속 상태', render: (r) => <StatusBadge kind="offline" status={r.offline_state} /> },
     {
       key: '_actions',
       header: '',
@@ -205,18 +277,23 @@ export function StationsPage() {
       <PageHeader
         title="단말"
         breadcrumb="기준정보 › 단말 (ADM-07)"
-        description="단말 ID·유형·고정 공정코드·설치 위치·마지막 접속. API key 발급·회전 (미접속 강조는 [S4-8])"
+        description="단말 ID·유형·고정 공정코드·설치 위치·마지막 접속·접속 상태(offline_state). API key 발급·회전 [S4-8]"
         actions={
-          <Button
-            variant="primary"
-            disabled={!write}
-            onClick={() => {
-              setEditing(null)
-              setFormOpen(true)
-            }}
-          >
-            등록
-          </Button>
+          <>
+            <Button variant="secondary" onClick={() => setOfflineSettingsOpen(true)}>
+              미접속 임계값
+            </Button>
+            <Button
+              variant="primary"
+              disabled={!write}
+              onClick={() => {
+                setEditing(null)
+                setFormOpen(true)
+              }}
+            >
+              등록
+            </Button>
+          </>
         }
       />
       <ListToolbar params={params} />
@@ -283,6 +360,7 @@ export function StationsPage() {
         onClose={() => setToggling(null)}
         onDone={() => void list.refetch()}
       />
+      <OfflineSettingsModal open={offlineSettingsOpen} onClose={() => setOfflineSettingsOpen(false)} writable={write} />
     </>
   )
 }

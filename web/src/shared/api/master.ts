@@ -42,9 +42,11 @@ import type {
   StationCreate,
   StationCreated,
   StationKeyRotated,
+  StationOfflineThreshold,
   StationUpdate,
   User,
   UserCreate,
+  UserSummary,
   UserUpdate,
   SetPinRequest,
   SetPasswordRequest,
@@ -120,6 +122,14 @@ export const stationsApi = {
   ...crud<Station, StationCreate, StationUpdate>('stations'),
   create: (body: StationCreate) => api.post<StationCreated>(`${P}/stations`, body),
   rotateKey: (id: string) => api.post<StationKeyRotated>(`${P}/stations/${encodeURIComponent(id)}/rotate-key`),
+  /** GET /stations/{id}/workers [S4] admin #14 인근(§13.2 shopfloor ④) — 오프라인 로그인 캐시용 단말 소속 작업자 */
+  workers: (id: string) => api.get<UserSummary[]>(`${P}/stations/${encodeURIComponent(id)}/workers`),
+}
+
+/** GET/PUT /settings/station-offline — admin #14 [S4], 분 단위 미접속 임계값 (StationOfflineThreshold) */
+export const stationOfflineApi = {
+  get: () => api.get<StationOfflineThreshold>(`${P}/settings/station-offline`),
+  put: (body: StationOfflineThreshold) => api.put<StationOfflineThreshold>(`${P}/settings/station-offline`, body),
 }
 
 export const usersApi = {

@@ -12,6 +12,8 @@ import type {
   QrLanding,
   ReasonRequest,
   ReprintRequest,
+  ReworkRequest,
+  ReworkResponse,
   SalesOrder,
   SalesOrderCreate,
   SalesOrderDetail,
@@ -21,6 +23,7 @@ import type {
   SoCancelResponse,
   SplitRequest,
   SplitResponse,
+  WoEventCancelRequest,
   WoProposal,
   WorkOrder,
   WorkOrderDetail,
@@ -75,6 +78,11 @@ export const woApi = {
   split: (id: number, body: SplitRequest) => api.post<SplitResponse>(`${P}/wo/${id}/split`, body),
   /** POST /wo/{id}/reprint {label_type, printer_id?} → LabelJob. 503 PRINTER_UNREACHABLE */
   reprint: (id: number, body: ReprintRequest) => api.post<LabelJob>(`${P}/wo/${id}/reprint`, body),
+  /** POST /wo/{id}/rework ReworkRequest{qty,reason,reinsert_p30} → ReworkResponse (E3, [S4-6]) */
+  rework: (id: number, body: ReworkRequest) => api.post<ReworkResponse>(`${P}/wo/${id}/rework`, body),
+  /** POST /wo/{id}/events/{event_uuid}/cancel {reason} → WorkOrder (E6, admin #28 [S4] — JWT MANAGER/ADMIN 전용) */
+  cancelEvent: (id: number, eventUuid: string, reason: string) =>
+    api.post<WorkOrder>(`${P}/wo/${id}/events/${encodeURIComponent(eventUuid)}/cancel`, { reason } satisfies WoEventCancelRequest),
 }
 
 /** QR 착지 (api-contract §10). 공개 + 체크코드 검증. 로그인 토큰이 있으면 client 가 자동으로 붙인다 */

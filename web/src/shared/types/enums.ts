@@ -37,6 +37,10 @@ export type NotificationChannel = 'KAKAO' | 'SMS' | 'PUSH' | 'EMAIL' | 'INAPP'
 export type MigrationSource = 'IMS_XLS' | 'COUNT'
 export type MigrationStatus = 'PREVIEW' | 'LOADED' | 'FAILED' | 'ROLLED_BACK'
 export type ImportEntity = 'customer' | 'item' | 'stock'
+/** admin #14 [S4] — station.offline_state (`GET/PUT /settings/station-offline` 임계값 기반) */
+export type OfflineState = 'ONLINE' | 'WARN' | 'ERROR'
+/** ADM-30 감사 로그 action */
+export type AuditAction = 'INSERT' | 'UPDATE' | 'DELETE' | 'APPROVE'
 
 /** admin #11 — process.required_inputs 허용 값 */
 export type RequiredInput = 'qty' | 'box_count' | 'inspection' | 'equipment' | 'qty_good' | 'qty_bad' | 'qty_box' | 'tracking_no'
@@ -52,3 +56,25 @@ export const IMPORT_ENTITIES: readonly ImportEntity[] = ['customer', 'item', 'st
 export const STOCK_TXN_TYPES: readonly StockTxnType[] = ['MIGRATE', 'RECEIVE', 'SHIP', 'ADJUST', 'REWORK']
 export const STOCK_SOURCES: readonly StockSource[] = ['IMS_XLS', 'NEW', 'COUNT']
 export const REQUIRED_INPUTS: readonly RequiredInput[] = ['qty', 'box_count', 'inspection', 'equipment', 'qty_good', 'qty_bad', 'qty_box', 'tracking_no']
+export const NOTIFICATION_TYPES: readonly NotificationType[] = ['DELAY', 'DEFECT', 'RECEIPT_SHORT', 'QTY_VARIANCE', 'APPROVAL_REQUEST', 'OFFLINE_BACKLOG']
+export const NOTIFICATION_CHANNELS: readonly NotificationChannel[] = ['KAKAO', 'SMS', 'PUSH', 'EMAIL', 'INAPP']
+export const OFFLINE_STATES: readonly OfflineState[] = ['ONLINE', 'WARN', 'ERROR']
+export const AUDIT_ACTIONS: readonly AuditAction[] = ['INSERT', 'UPDATE', 'DELETE', 'APPROVE']
+/** ADM-30 필터 셀렉트 (screens-admin §2 훅 대상 목록, db §7.2) */
+export const AUDIT_TABLES: readonly string[] = [
+  'customer',
+  'customer_address',
+  'item',
+  'process',
+  'equipment',
+  'print_method',
+  'item_routing',
+  'routing_step',
+  'station',
+  'app_user',
+  'printer',
+  'sales_order',
+  'sales_order_line',
+  'design',
+  'stock_txn',
+]

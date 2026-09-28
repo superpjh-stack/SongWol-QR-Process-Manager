@@ -11,6 +11,7 @@ import {
   LOT_STATUS,
   MIGRATION_SOURCE,
   MIGRATION_STATUS,
+  OFFLINE_STATE,
   RECEIPT_STATUS,
   ROLE_STATUS,
   SCAN_RESULT,
@@ -23,6 +24,7 @@ import {
   type Inspection,
   type LotStatus,
   type MigrationStatus,
+  type OfflineState,
   type ReceiptStatus,
   type Role,
   type ScanResult,
@@ -51,6 +53,7 @@ export type StatusBadgeProps = (
   | { kind: 'delay'; status: true }
   | { kind: 'inspection'; status: Inspection }
   | { kind: 'shipment'; status: ShipmentStatus }
+  | { kind: 'offline'; status: OfflineState }
 ) & {
   /** 기본 'admin' */
   density?: Density | undefined
@@ -89,6 +92,8 @@ function metaOf(p: StatusBadgeProps): StatusMeta {
       return INSPECTION_STATUS[p.status]
     case 'shipment':
       return SHIPMENT_STATUS[p.status]
+    case 'offline':
+      return OFFLINE_STATE[p.status]
   }
 }
 

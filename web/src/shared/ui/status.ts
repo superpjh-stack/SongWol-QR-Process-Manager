@@ -43,12 +43,14 @@ export type {
   LotStatus,
   Inspection,
   ShipmentStatus,
+  OfflineState,
 } from '../types'
 import type {
   ApprovalStatus,
   Inspection,
   LotStatus,
   MigrationStatus,
+  OfflineState,
   ReceiptStatus,
   Role,
   ScanResult,
@@ -58,7 +60,7 @@ import type {
   StockSource,
   WoStatus,
 } from '../types'
-import { ApprovalStatusLabel, InspectionLabel, LotStatusLabel, MigrationSourceLabel, MigrationStatusLabel, RoleLabel, ScanResultLabel, ShipmentStatusLabel, SoStatusLabel } from '../labels'
+import { ApprovalStatusLabel, InspectionLabel, LotStatusLabel, MigrationSourceLabel, MigrationStatusLabel, OfflineStateLabel, RoleLabel, ScanResultLabel, ShipmentStatusLabel, SoStatusLabel } from '../labels'
 
 /** 의미색 키. tokens.css 의 --color-status-<tone>-* 와 1:1 */
 export type StatusTone =
@@ -199,4 +201,11 @@ export const SHIPMENT_STATUS: Record<ShipmentStatus, StatusMeta> = {
   READY: { label: ShipmentStatusLabel.READY, tone: 'waiting', Icon: IconBox },
   SHIPPED: { label: ShipmentStatusLabel.SHIPPED, tone: 'done', Icon: IconTruck },
   DELIVERED: { label: ShipmentStatusLabel.DELIVERED, tone: 'done', Icon: IconCheck },
+}
+
+/** 단말 미접속 상태 (admin #14 [S4], ADM-07 단말 목록). tone 'offline' 은 이 상태 전용으로 예약돼 있었다 */
+export const OFFLINE_STATE: Record<OfflineState, StatusMeta> = {
+  ONLINE: { label: OfflineStateLabel.ONLINE, tone: 'done', Icon: IconCheck },
+  WARN: { label: OfflineStateLabel.WARN, tone: 'warn', Icon: IconWarning },
+  ERROR: { label: OfflineStateLabel.ERROR, tone: 'offline', Icon: IconX },
 }
