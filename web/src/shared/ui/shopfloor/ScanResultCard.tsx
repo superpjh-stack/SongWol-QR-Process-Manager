@@ -10,7 +10,8 @@
  */
 import { useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { cn } from '../cn'
-import { IconCheck, IconImage, IconKey, IconSave, IconWarning, IconX } from '../icons'
+import { DesignThumbnail } from './DesignThumbnail'
+import { IconCheck, IconKey, IconSave, IconWarning, IconX } from '../icons'
 import { StatusBadge } from '../StatusBadge'
 import { TONE_CLASS, type StatusTone, type StepStatus, type WoStatus } from '../status'
 
@@ -161,14 +162,7 @@ export function ScanResultCard({ wo, variant, message, warnings, autoDismissMs, 
           className="flex h-[160px] w-[160px] shrink-0 items-center justify-center overflow-hidden rounded-sf border-2 border-dashed border-line bg-surface-2 text-ink-faint"
           aria-label="도안 썸네일"
         >
-          {wo.designThumbUrl ? (
-            <img src={wo.designThumbUrl} alt="도안" className="h-full w-full object-contain" />
-          ) : (
-            <div className="flex flex-col items-center gap-1 text-sf-body">
-              <IconImage size={40} />
-              <span>도안 없음</span>
-            </div>
-          )}
+          <DesignThumbnail src={wo.designThumbUrl} />
         </figure>
       </div>
 

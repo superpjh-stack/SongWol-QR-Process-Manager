@@ -107,6 +107,10 @@ export function LoginScreen({ processName, stationId, pendingWoCode, onLoggedIn,
                 onChange={setPin}
                 onConfirm={() => void loginByIdPin()}
                 maxLength={6}
+                // DEF-QA2-S2-001 과 같은 원인: 이 화면의 useScannerInput 은 mode 와 무관하게 항상 켜져 있어
+                // (카드 분실 후 ID·PIN 입력 중에도 카드를 다시 스캔하면 즉시 로그인되도록), 카드 스캔 문자가
+                // NumPad 의 전역 keydown 으로 새지 않도록 물리 키보드 입력은 끄고 터치 키패드만 받는다.
+                keyboard={false}
                 confirmLabel={busy ? '확인 중…' : '로그인'}
                 confirmDisabled={!loginId.trim() || pin.length < 4 || busy}
               />

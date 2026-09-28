@@ -201,9 +201,13 @@ function filenameFromDisposition(h: string | null): string | null {
 
 export type DownloadResult = { filename: string; size: number; type: string }
 
-/** JWT 헤더로 blob 을 받는다 (이미지 표시용 — AuthImage). 실패는 ApiError throw */
-export async function fetchBlob(path: string): Promise<Blob> {
-  const res = await doFetch(path, { method: 'GET', headers: { ...authHeaders() }, credentials: 'same-origin' })
+/**
+ * 인증 헤더가 필요한 blob 을 받는다 (이미지 표시용 — AuthImage, 키오스크의 도안 썸네일).
+ * 기본은 JWT(`authHeaders()`) 지만, `extraHeaders` 로 단말 키(`X-Station-Key`, F37) 등 다른 자격을
+ * 얹거나 덮어쓸 수 있다 — `request()` 와 같은 병합 순서(기본 → extra). 실패는 ApiError throw
+ */
+export async function fetchBlob(path: string, extraHeaders?: Record<string, string>): Promise<Blob> {
+  const res = await doFetch(path, { method: 'GET', headers: { ...authHeaders(), ...extraHeaders }, credentials: 'same-origin' })
   if (!res.ok) {
     const parsed = await parseBody(res)
     if (res.status === 401) handleUnauthorized({})

@@ -4,6 +4,12 @@
  * 다이얼로그 자신이 열려 있는 동안 `US` 스캔만 구독해 승인자 카드를 자동으로 채운다(§4.1).
  * 승인은 온라인 전용(api-contract §13.2 ⑪) — `offline` 이면 승인·거부를 막고 사유를 보여준다.
  * 검증·API 호출은 화면이 한다. 실패 시 `error` 로 문구를 넘기면 값이 지워지고 다시 입력받는다.
+ *
+ * DEF-QA2-S2-001: 이 다이얼로그는 NumPad 와 useScannerInput(승인자 카드용)을 같은 화면에 동시에 마운트하는
+ * 유일한 곳이다. NumPad 의 물리 키보드 지원(기본 켜짐)을 켜 두면 카드 스캔의 숫자 문자가 PIN 입력으로 새고,
+ * 드물게는 스캔의 마지막 Enter 가 NumPad 의 confirm() 까지 트리거해 오염된 PIN 으로 조기 제출된다. PIN 입력은
+ * 터치 키패드로만 받도록 NumPad 의 `keyboard={false}` 로 물리 키보드 캡처를 꺼서 두 리스너를 분리한다.
+ * 또한 승인 요청이 진행 중(`busy`)인 동안은 카드 스캔을 `hold` 로 보류했다가 끝난 뒤 반영한다.
  */
 import { useEffect, useState } from 'react'
 import { useScannerInput } from '../../hooks/useScannerInput'
@@ -74,6 +80,7 @@ export function PinDialog({
   }, [error])
 
   // 승인자 카드(US-NNNN) 자동 채움. 다이얼로그가 열려 있을 때만 구독한다.
+  // 승인 요청이 진행 중(busy)이면 스캔을 보류(hold)했다가 끝난 뒤 마지막 1건만 반영한다.
   useScannerInput(
     (parsed) => {
       if (parsed.type === 'US') {
@@ -81,7 +88,7 @@ export function PinDialog({
         onApproverScan?.(parsed.code)
       }
     },
-    { enabled: open },
+    { enabled: open, hold: Boolean(busy) },
   )
 
   if (!open) return null
@@ -141,6 +148,7 @@ export function PinDialog({
           onConfirm={onSubmit}
           masked
           maxLength={maxLength}
+          keyboard={false}
           confirmLabel={busy ? '확인 중…' : '승인'}
           confirmDisabled={!canAct}
           className="mx-auto"

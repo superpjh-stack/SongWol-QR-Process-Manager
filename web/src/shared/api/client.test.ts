@@ -1,6 +1,6 @@
 /** client.ts — 오류 매핑·토큰·401 처리 (api-contract §3, screens-admin §0.4) */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api, clearToken, downloadBlob, getToken, qs, setToken, setUnauthorizedHandler, toApiError } from './client'
+import { ApiError, api, clearToken, downloadBlob, fetchBlob, getToken, qs, setToken, setUnauthorizedHandler, toApiError } from './client'
 import { fieldErrorsOf, toErrorView } from './errors'
 
 function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}) {
@@ -150,5 +150,16 @@ describe('client', () => {
 
     fetchMock.mockResolvedValueOnce(jsonResponse(403, { code: 'FORBIDDEN', message: '접근 권한이 없습니다', detail: [] }))
     await expect(downloadBlob('/api/v1/master/import/template?entity=stock')).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' })
+  })
+
+  it('fetchBlob 은 extraHeaders 로 단말 키(X-Station-Key) 등 다른 자격을 얹을 수 있다 (F37 — 키오스크 도안 썸네일)', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(new Blob(['x']), { status: 200 }))
+    await fetchBlob('/api/v1/designs/1/thumbnail', { 'X-Station-Key': 'stationkey123' })
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>
+    expect(headers['X-Station-Key']).toBe('stationkey123')
+    expect(headers.Authorization).toBeUndefined()
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { code: 'BAD_STATION_KEY', message: '단말 인증 실패', detail: [] }))
+    await expect(fetchBlob('/api/v1/designs/1/thumbnail', { 'X-Station-Key': 'wrong' })).rejects.toMatchObject({ status: 401, code: 'BAD_STATION_KEY' })
   })
 })
