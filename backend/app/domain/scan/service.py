@@ -661,10 +661,14 @@ async def _persist_inserted_step(
         for snap in new_snaps
         if snap.process_code in by_process and by_process[snap.process_code].seq != snap.seq
     ]
-    # 내림차순으로 옮겨야 UK(wo_id, seq) 충돌이 나지 않는다
+    # 내림차순으로 옮겨야 UK(wo_id, seq) 충돌이 나지 않는다. SQLAlchemy 는 flush 안에서
+    # UPDATE 문 발행 순서를 attribute 를 설정한 파이썬 루프 순서로 보장하지 않으므로
+    # (보통 세션에 먼저 로드된 순서 = seq 오름차순을 따른다), 건마다 즉시 flush 해
+    # 실제 SQL 도 내림차순으로 나가도록 강제한다 (QA① — 안 그러면 두 단계 이상 밀어야
+    # 하는 E3 삽입에서 매번 409 DUPLICATE_CODE 로 실패했다).
     for snap, orm in sorted(changed, key=lambda pair: pair[0].seq, reverse=True):
         orm.seq = snap.seq
-    await session.flush()
+        await session.flush()
     new_snap = next(s for s in new_snaps if s.process_code not in by_process)
     session.add(
         WoRouteStep(

@@ -467,3 +467,86 @@ async def test_approve_requires_manager_role(
     )
     assert res.status_code == 403
     assert res.json()["code"] == "APPROVER_ROLE"
+
+
+async def test_e3_route_insert_approve_shifts_two_steps_without_duplicate_code(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    """E3(§5.2 3단계·§11-5): P30 이 없는 NONE 라우팅(P20→P50→P60)에서 P30 스캔 →
+    승인 시 P30 을 seq 2 에 끼워 넣고 P50·P60 을 한 칸씩 뒤로 민다. 삽입 지점 뒤에
+    단계가 2개 이상이면 ``_persist_inserted_step`` 이 SQLAlchemy flush 순서를 신뢰해
+    UK(wo_id, seq) 충돌(409 DUPLICATE_CODE)로 실패하던 회귀(QA① S2)."""
+    station_id, api_key, eq_code = await _setup_p30_station_and_equipment(client, admin_headers)
+    worker = await _worker_card()
+    manager_headers = await headers_for(client, uniq("mgr").lower(), "MANAGER")
+
+    m = await setup_master(client, admin_headers, routings=("NONE",))
+    so = await make_so(
+        client,
+        admin_headers,
+        m,
+        lines=[{"item_id": m["item"]["id"], "print_method": "NONE", "qty": 30, "unit_price": 500}],
+    )
+    result = await issue_all(client, admin_headers, so["id"])
+    wo = result["work_orders"][0]
+    wo_code = wo["code"]
+    steps_by_code = {s["process_code"]: s for s in wo["steps"]}
+    assert set(steps_by_code) == {"P20", "P50", "P60"}
+
+    body = scan_body(
+        station_id=station_id,
+        worker_card=worker,
+        code=wo_code,
+        action="DONE",
+        equipment_code=eq_code,
+        qty_good=30,
+        qty_bad=0,
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": api_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "WARN"
+    assert data["requires_approval"] is True
+    event_uuid = data["event_uuid"]
+
+    # 1차 승인: E3 삽입 자체는 성공해야 한다 (예전에는 여기서 409 DUPLICATE_CODE 였다).
+    # 삽입 직후 새 P30 의 직전 단계(P20) 도 아직 WAITING 이라 E1 로 재보류된다.
+    res = await client.post(
+        f"{API}/scan/{event_uuid}/approve", headers=manager_headers, json={"decision": "APPROVE"}
+    )
+    assert res.status_code == 200, res.text
+    first = res.json()
+    assert first["result"] == "WARN"
+    assert first["requires_approval"] is True
+
+    res = await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)
+    detail = res.json()
+    steps_by_code = {s["process_code"]: s for s in detail["steps"]}
+    assert [s["process_code"] for s in sorted(detail["steps"], key=lambda s: s["seq"])] == [
+        "P20",
+        "P30",
+        "P50",
+        "P60",
+    ]
+    assert steps_by_code["P30"]["status"] == "WAITING"
+
+    # 2차 승인(E1): P20 이 DONE_ESTIMATED 로, 원 스캔(P30 DONE)이 반영된다.
+    res = await client.post(
+        f"{API}/scan/{event_uuid}/approve", headers=manager_headers, json={"decision": "APPROVE"}
+    )
+    assert res.status_code == 200, res.text
+    second = res.json()
+    assert second["result"] == "OK"
+    assert second["requires_approval"] is False
+    assert second["step"]["process_code"] == "P30"
+    assert second["step"]["status"] == "DONE"
+
+    res = await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)
+    detail = res.json()
+    assert detail["status"] == "IN_PROGRESS"
+    steps_by_code = {s["process_code"]: s for s in detail["steps"]}
+    assert steps_by_code["P20"]["status"] == "DONE_ESTIMATED"
+    assert steps_by_code["P30"]["status"] == "DONE"
+    assert steps_by_code["P30"]["qty_good"] == 30
+    assert steps_by_code["P50"]["status"] == "WAITING"
+    assert steps_by_code["P60"]["status"] == "WAITING"
