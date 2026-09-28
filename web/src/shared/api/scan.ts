@@ -30,6 +30,7 @@ import type {
   Station,
   VendorBarcodeLookup,
   WorkOrderDetail,
+  WorkOrderSummary,
 } from '../types'
 
 const P = API_PREFIX
@@ -74,6 +75,12 @@ export const stationApi = {
   /** GET /api/v1/wo/{code} (STATION R, 코드 허용) — KSK-20 WO 요약 조회 */
   wo: (code: string, signal?: AbortSignal) =>
     api.get<WorkOrderDetail>(`${P}/wo/${encodeURIComponent(code)}`, { headers: stationHeaders(), ...(signal ? { signal } : {}) }),
+  /**
+   * GET /api/v1/wo/search?q= (STATION R) — KSK-70 라벨 재발행 검색. `shared/api/order.ts` 의
+   * `woApi.search` 와 같은 경로지만 그쪽은 JWT(`authHeaders()`)만 붙인다 — 키오스크는 워커 로그인이
+   * JWT 를 발급하지 않으므로(§0.3) 여기 STATION 키 버전을 따로 둔다(다른 STATION 전용 메서드들과 같은 이유).
+   */
+  searchWo: (q: string) => api.get<WorkOrderSummary[]>(`${P}/wo/search${qs({ q })}`, { headers: stationHeaders() }),
   /**
    * PDA(P20·P60) 전용 조회·액션 — STATION 키만으로 부른다(워커 로그인은 JWT 를 발급하지 않는다, §0.3).
    * `shared/api/material.ts`·`shipping.ts`·`label.ts` 의 같은 리소스는 관리자 JWT 전용이라 여기서

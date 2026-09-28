@@ -1,11 +1,11 @@
 import { lazy, Suspense } from 'react'
 import { createBrowserRouter, Link } from 'react-router-dom'
-import { Placeholder } from './Placeholder'
 import { adminRoute, loginRoute } from '@/admin/routes'
 import { QrLandingPage } from '@/q/QrLandingPage'
 import { SetupPage } from '@/setup/SetupPage'
 import { KioskApp } from '@/kiosk/KioskApp'
 import { PdaApp } from '@/pda/PdaApp'
+import { BoardApp } from '@/board/BoardApp'
 
 // dev 전용 공용 컴포넌트 갤러리 (웨이브 B 디자인). prod 번들에는 들어가지 않는다.
 const DevGallery = lazy(() => import('./DevGallery'))
@@ -32,7 +32,7 @@ export const router = createBrowserRouter([
   adminRoute,
   { path: '/kiosk/*', element: <KioskApp /> },
   { path: '/pda/*', element: <PdaApp /> },
-  { path: '/board/*', element: <Placeholder name="현황판" spec="§9.5" /> },
+  { path: '/board/*', element: <BoardApp /> },
   { path: '/q/:code', element: <QrLandingPage /> },
   { path: '/setup', element: <SetupPage /> },
   ...(import.meta.env.DEV

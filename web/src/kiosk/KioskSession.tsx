@@ -27,6 +27,7 @@ import { ResultScreen } from './screens/ResultScreen'
 import { PackScannedScreen } from './screens/PackScannedScreen'
 import { PackResultScreen } from './screens/PackResultScreen'
 import { PackLabelConfirmScreen } from './screens/PackLabelConfirmScreen'
+import { ReprintScreen } from './screens/ReprintScreen'
 
 type Phase =
   | 'IDLE'
@@ -41,6 +42,7 @@ type Phase =
   | 'PACK_SCANNED'
   | 'PACK_RESULT'
   | 'PACK_LABEL_CONFIRM'
+  | 'REPRINT'
 
 type ScannedCode = { code: string; check: string | null; inputVia: InputVia }
 type ResultData =
@@ -514,6 +516,13 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
               <button type="button" onClick={() => setCameraOpen(true)} className="min-h-touch-min rounded-sf border-2 border-line-strong bg-surface px-4 text-sf-body font-bold">
                 카메라 스캔 / 직접 입력
               </button>
+              <button
+                type="button"
+                onClick={() => setPhase('REPRINT')}
+                className="inline-flex min-h-touch-min items-center gap-2 rounded-sf border-2 border-line-strong bg-surface px-4 text-sf-body font-bold"
+              >
+                <IconTag size={20} /> 라벨 재발행
+              </button>
               <button type="button" onClick={() => setPhase('PENDING_QUEUE')} className="min-h-touch-min rounded-sf border-2 border-line-strong bg-surface px-4 text-sf-body font-bold">
                 미전송 목록
               </button>
@@ -678,6 +687,8 @@ export function KioskSession({ station, processName, bootOffline }: { station: S
           onClose={() => setPhase('IDLE')}
         />
       ) : null}
+
+      {phase === 'REPRINT' ? <ReprintScreen printerId={station.printer_id} offline={offlineQueue.status === 'offline'} onBack={() => setPhase('IDLE')} /> : null}
 
       {phase === 'PACK_LABEL_CONFIRM' ? (
         <PackLabelConfirmScreen
