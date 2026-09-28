@@ -57,6 +57,7 @@ async def request_id_middleware(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
     rid = request.headers.get("x-request-id") or new_request_id()
+    request.state.request_id = rid  # 미처리 예외 핸들러(contextvar 리셋 뒤)가 읽는다
     token_rid = current_request_id.set(rid)
     token_uid = current_user_id.set(None)
     try:
@@ -130,6 +131,16 @@ async def db_unavailable_handler(request: Request, exc: Exception) -> JSONRespon
     logger.exception("DB unavailable")
     return _error_response(
         503, "DB_UNAVAILABLE", "서비스 일시 중단 — 데이터베이스에 연결할 수 없습니다"
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
+    """D52 (DEF-QA2-S1-005): 미처리 예외도 계약 형식 500 + X-Request-Id. 원인은 로그에만."""
+    rid = getattr(request.state, "request_id", None) or request.headers.get("x-request-id")
+    logger.exception("unhandled error request_id=%s %s %s", rid, request.method, request.url.path)
+    return _error_response(
+        500, "INTERNAL_ERROR", "서버 오류", headers={"X-Request-Id": rid} if rid else None
     )
 
 

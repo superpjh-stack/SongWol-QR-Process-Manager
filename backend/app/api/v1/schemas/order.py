@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from app.api.v1.schemas.common import ApiModel, CodeStr, IdRef, KstDateTime
+from app.api.v1.schemas.common import ApiModel, CodeStr, IdRef, KstDateTime, read_only_fields
 from app.api.v1.schemas.label_job import LabelJob as LabelJob
 from app.api.v1.schemas.label_job import LabelType as LabelType
 from app.api.v1.schemas.master import RoutingStepInput, UserSummary
@@ -120,6 +120,25 @@ class SalesOrderCreate(ApiModel):
 
 
 class SalesOrderUpdate(ApiModel):
+    _read_only = read_only_fields(
+        "id",
+        "code",
+        "customer_id",
+        "order_date",
+        "status",
+        "progress_pct",
+        "confirmed_at",
+        "shipped_at",
+        "created_by",
+        "created_at",
+        "updated_at",
+        "cancel_reason",
+        "cancelled_at",
+        "cancelled_by",
+        "line_count",
+        "wo_count",
+        "delay_risk",
+    )
     due_date: date | None = None
     ship_to: ShipTo | None = None
     memo: str | None = None

@@ -1,8 +1,10 @@
 """다른 도메인으로 나가는 훅 (동시 개발 중이라 직접 import 하지 않는다).
 
-``issue_labels_for_wo`` — WO 발행 시 라벨·QR 발행(label_issue WORK_ORDER_PDF · WO_LABEL,
-api-contract §7.3 issue-wo). 기본 구현은 **no-op + 로그**. 개발B 가 ``app/domain/label`` 서비스
-함수를 ``set_label_issuer()`` 로 연결한다 (예: ``app.domain.label.service.issue_for_wo``).
+``issue_labels_for_wo(session, wo, issued_by)`` — WO 발행 시 라벨·QR 발행(label_issue
+WORK_ORDER_PDF · WO_LABEL, api-contract §7.3 issue-wo). ``issued_by`` 는 발행한 사용자 id
+(label_issue.issued_by, DEF-QA1-S1-002). 기본 구현은 **no-op + 로그**. 개발B 가
+``app/domain/label`` 서비스 함수를 ``set_label_issuer()`` 로 연결한다
+(``app.domain.label.service.label_issuer``).
 
 발행 트랜잭션 안에서 호출된다 (session 은 아직 commit 전). 훅이 예외를 올리면 발행 전체가
 롤백된다 — 프린터 실패 같은 「라벨만 실패」는 훅 안에서 label_job.error 로 표현해야 한다
@@ -20,10 +22,10 @@ from app.db.models.order import WorkOrder
 
 logger = logging.getLogger(__name__)
 
-LabelIssuer = Callable[[AsyncSession, WorkOrder], Awaitable[None]]
+LabelIssuer = Callable[[AsyncSession, WorkOrder, int | None], Awaitable[None]]
 
 
-async def _noop_label_issuer(session: AsyncSession, wo: WorkOrder) -> None:
+async def _noop_label_issuer(session: AsyncSession, wo: WorkOrder, issued_by: int | None) -> None:
     logger.info("issue_labels_for_wo: no label issuer connected — skipped for %s", wo.code)
 
 
@@ -36,9 +38,12 @@ def set_label_issuer(fn: LabelIssuer) -> None:
     _label_issuer = fn
 
 
-async def issue_labels_for_wo(session: AsyncSession, wo: WorkOrder) -> None:
-    """WO 발행 직후 라벨 발행 훅. 기본은 no-op."""
-    await _label_issuer(session, wo)
+async def issue_labels_for_wo(
+    session: AsyncSession, wo: WorkOrder, issued_by: int | None = None
+) -> None:
+    """WO 발행 직후 라벨 발행 훅. ``issued_by`` = 발행한 사용자(label_issue.issued_by,
+    DEF-QA1-S1-002). 기본은 no-op."""
+    await _label_issuer(session, wo, issued_by)
 
 
 def so_pdf_url(so_code: str) -> str:

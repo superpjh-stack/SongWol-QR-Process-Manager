@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, PlainSerializer
+from pydantic import BaseModel, BeforeValidator, ConfigDict, PlainSerializer, model_validator
+
+from app.core.errors import ApiError as ApiErrorExc
 
 TZ_SEOUL = ZoneInfo("Asia/Seoul")
 
@@ -56,3 +58,29 @@ class IdRef(ApiModel):
     id: int
     code: str
     name: str | None = None
+
+
+def read_only_fields(*names: str) -> Any:
+    """PATCH 본문에 불변 필드가 오면 422 ``READ_ONLY_FIELD`` (api-contract §14.2, DEF-QA1-S1-001).
+
+    Update 모델 클래스 본문에 ``_read_only = read_only_fields("id", "code")`` 로 둔다.
+    ``ApiModel`` 은 extra=ignore 라 조용히 무시되던 것을 드러낸다. ApiError 는 pydantic 검증을 뚫고
+    ``app.main`` 의 핸들러로 간다.
+    """
+
+    def _check(cls: type[BaseModel], value: Any) -> Any:
+        if isinstance(value, dict):
+            bad = [n for n in names if n in value]
+            if bad:
+                raise ApiErrorExc(
+                    422,
+                    "READ_ONLY_FIELD",
+                    f"변경할 수 없는 항목입니다: {', '.join(bad)}",
+                    [
+                        {"loc": ["body", n], "msg": "읽기 전용 필드", "type": "read_only"}
+                        for n in bad
+                    ],
+                )
+        return value
+
+    return model_validator(mode="before")(_check)

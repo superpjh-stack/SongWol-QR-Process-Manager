@@ -6,7 +6,8 @@
 - 대상: customer · customer_address · item · item_group · process · equipment · print_method
   · item_routing · routing_step · station · app_user · printer · carrier · label_template ·
   app_setting
-  · sales_order · sales_order_line · design (stock_txn[ADJUST] 는 재고 서비스가 명시적으로 쓴다).
+  · sales_order · sales_order_line · design · work_order (DEF-QA2-S1-004: 발행·보류·재개·취소·종결)
+  (stock_txn[ADJUST] 는 재고 서비스가 명시적으로 쓴다).
 - 잡음 컬럼(last_seen_at · updated_at · pin_failed_count · pin_locked_until)만 바뀐 UPDATE 는
   기록하지 않는다. 비밀 해시 컬럼은 값 대신 ``"<set>"``/None 으로 남긴다.
 - 숫자 PK 는 ``row_id``, 자연키(문자열 PK) 테이블은 ``row_key=str(pk)`` (db-schema §15, 0006).
@@ -41,7 +42,7 @@ from app.db.models.master import (
     Station,
 )
 from app.db.models.ops import AuditLog
-from app.db.models.order import Design, SalesOrder, SalesOrderLine
+from app.db.models.order import Design, SalesOrder, SalesOrderLine, WorkOrder
 
 AUDITED_MODELS: tuple[type[Any], ...] = (
     Customer,
@@ -62,6 +63,7 @@ AUDITED_MODELS: tuple[type[Any], ...] = (
     SalesOrder,
     SalesOrderLine,
     Design,
+    WorkOrder,
 )
 NOISE_COLUMNS = frozenset({"last_seen_at", "updated_at", "pin_failed_count", "pin_locked_until"})
 SECRET_COLUMNS = frozenset({"password_hash", "pin_hash", "api_key_hash"})

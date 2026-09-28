@@ -200,6 +200,12 @@ class WorkOrder(TimestampMixin, Base):
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     hold_reason: Mapped[str | None] = mapped_column(String(200))
+    # 0007 (F33 · DEF-QA1-S1-005): 취소 사유·시각·사용자. hold_reason 과 분리
+    cancel_reason: Mapped[str | None] = mapped_column(String(200))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT")
+    )
 
     route_steps: Mapped[list["WoRouteStep"]] = relationship(
         back_populates="work_order", order_by="WoRouteStep.seq"

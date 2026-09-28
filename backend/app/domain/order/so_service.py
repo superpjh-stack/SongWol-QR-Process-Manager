@@ -53,9 +53,15 @@ def today_kst() -> date:
 # ======================================================================
 # 조회
 # ======================================================================
-async def resolve_so(session: AsyncSession, key: str) -> SalesOrder:
-    """``{id|code}`` (api-contract §11-1). 숫자면 PK, 아니면 코드(정규화 후)."""
+async def resolve_so(session: AsyncSession, key: str, *, for_update: bool = False) -> SalesOrder:
+    """``{id|code}`` (api-contract §11-1). 숫자면 PK, 아니면 코드(정규화 후).
+
+    ``for_update`` 는 SO 행을 ``SELECT … FOR UPDATE`` 로 잠근다 (D43: issue-wo 직렬화 — 같은 SO 의
+    동시 발행은 잠금 뒤 재검증에서 409 WO_ALREADY_ISSUED).
+    """
     stmt = select(SalesOrder)
+    if for_update:
+        stmt = stmt.with_for_update()
     if key.isdigit():
         stmt = stmt.where(SalesOrder.id == int(key))
     else:
@@ -358,16 +364,19 @@ async def cancel_sales_order(
     wos = (await session.execute(select(WorkOrder).where(WorkOrder.so_id == so.id))).scalars().all()
     cancelled: list[str] = []
     pending: list[WorkOrder] = []
+    now = datetime.now(UTC)
     for w in wos:
         if w.status in WO_NOT_STARTED:
             w.status = "CANCELLED"
-            w.hold_reason = reason  # 취소 사유 저장처 (db-schema 에 wo.cancel_reason 없음 → 보고)
+            w.cancel_reason = reason
+            w.cancelled_at = now
+            w.cancelled_by = user.id
             cancelled.append(w.code)
         elif w.status in WO_STARTED_PENDING:
             pending.append(w)
     so.status = "CANCELLED"
     so.cancel_reason = reason
-    so.cancelled_at = datetime.now(UTC)
+    so.cancelled_at = now
     so.cancelled_by = user.id
     await session.commit()
     await session.refresh(so)

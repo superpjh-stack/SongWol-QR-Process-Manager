@@ -137,7 +137,7 @@ async def test_issue_wo_snapshot_and_rules(
     # 라벨 훅: 개발B 연결 전 no-op. 여기서는 호출 여부만 기록
     called: list[str] = []
 
-    async def fake_issuer(session: AsyncSession, wo: WorkOrder) -> None:
+    async def fake_issuer(session: AsyncSession, wo: WorkOrder, issued_by: int | None) -> None:
         called.append(wo.code)
 
     saved = ports._label_issuer
@@ -440,3 +440,153 @@ async def test_issue_wo_requires_active_so_and_lines(
     w = issued["work_orders"][0]
     assert w["item"]["id"] == item2["id"] and w["steps"][0]["tolerance_pct"] == 5.0
     assert [s["process_code"] for s in w["steps"]] == ["P20", "P50", "P60"]
+
+
+# ======================================================================
+# S1 QA 수정 웨이브 (DEF-QA2-S1-001 · 004 · 005, DEF-QA1-S1-002 · 005, F33, D46)
+# ======================================================================
+@pytest.mark.asyncio
+async def test_issue_wo_concurrent_is_serialized(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """D43: 같은 SO 동시 issue-wo 3건 → 200 1건 · 409 WO_ALREADY_ISSUED 2건, 라인당 WO 1건."""
+    import asyncio
+
+    m = await setup_master(client, admin_headers, routings=("NONE",))
+    so = await make_so(
+        client,
+        admin_headers,
+        m,
+        lines=[{"item_id": m["item"]["id"], "print_method": "NONE", "qty": 90}],
+    )
+    drafts = (await client.post(f"{API}/so/{so['id']}/propose-wo", headers=admin_headers)).json()[
+        "items"
+    ]
+    results = await asyncio.gather(
+        *[
+            client.post(
+                f"{API}/so/{so['id']}/issue-wo", headers=admin_headers, json={"drafts": drafts}
+            )
+            for _ in range(3)
+        ]
+    )
+    codes = sorted(r.status_code for r in results)
+    assert codes == [200, 409, 409], [(r.status_code, r.text[:80]) for r in results]
+    assert all(r.json()["code"] == "WO_ALREADY_ISSUED" for r in results if r.status_code == 409)
+    res = await client.get(f"{API}/wo", headers=admin_headers, params={"so_code": so["code"]})
+    assert res.json()["total"] == 1
+    assert (await client.get(f"{API}/so/{so['id']}", headers=admin_headers)).json()["wo_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_wo_audit_cancel_reason_and_issued_by(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """work_order 감사(발행 INSERT · hold/cancel UPDATE, user_id) · cancel_reason 이 hold_reason 을
+    덮지 않음(F33) · 라벨 훅에 issued_by 전달(DEF-QA1-S1-002) · D46 confirmed_at 유지."""
+    from sqlalchemy import select
+
+    from app.db.models.ops import AuditLog
+    from app.db.models.order import WorkOrder as WorkOrderRow
+    from app.db.session import SessionLocal
+
+    m = await setup_master(client, admin_headers, routings=("NONE",))
+    so = await make_so(
+        client,
+        admin_headers,
+        m,
+        lines=[{"item_id": m["item"]["id"], "print_method": "NONE", "qty": 70}],
+    )
+    seen: list[tuple[str, int | None]] = []
+
+    async def capture(session: AsyncSession, wo: WorkOrder, issued_by: int | None) -> None:
+        seen.append((wo.code, issued_by))
+
+    saved = ports._label_issuer
+    ports.set_label_issuer(capture)
+    try:
+        wo = (await issue_all(client, admin_headers, so["id"]))["work_orders"][0]
+    finally:
+        ports.set_label_issuer(saved)
+    me = (await client.get(f"{API}/auth/me", headers=admin_headers)).json()
+    assert seen == [(wo["code"], me["id"])]
+    confirmed_at = (await client.get(f"{API}/so/{so['id']}", headers=admin_headers)).json()[
+        "confirmed_at"
+    ]
+    assert confirmed_at is not None
+
+    res = await client.post(
+        f"{API}/wo/{wo['id']}/hold", headers=admin_headers, json={"reason": "자재 대기"}
+    )
+    assert res.status_code == 200
+    res = await client.post(
+        f"{API}/wo/{wo['id']}/cancel", headers=admin_headers, json={"reason": "고객 취소"}
+    )
+    assert res.status_code == 200 and res.json()["status"] == "CANCELLED"
+    assert res.json()["hold_reason"] == "자재 대기"  # 보류 이력 유지
+    async with SessionLocal() as s:
+        row = await s.get(WorkOrderRow, wo["id"])
+        assert row is not None
+        assert row.cancel_reason == "고객 취소" and row.hold_reason == "자재 대기"
+        assert row.cancelled_at is not None and row.cancelled_by == me["id"]
+        logs = (
+            (
+                await s.execute(
+                    select(AuditLog)
+                    .where(AuditLog.table_name == "work_order", AuditLog.row_id == wo["id"])
+                    .order_by(AuditLog.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    actions = [(lg.action, (lg.after or {}).get("status")) for lg in logs]
+    assert actions[0] == ("INSERT", "ISSUED")
+    assert ("UPDATE", "ON_HOLD") in actions and ("UPDATE", "CANCELLED") in actions
+    assert all(lg.user_id == me["id"] and lg.request_id for lg in logs)
+    cancel_log = next(lg for lg in logs if (lg.after or {}).get("status") == "CANCELLED")
+    assert cancel_log.before is not None and cancel_log.before["status"] == "ON_HOLD"
+    assert cancel_log.after is not None and cancel_log.after["cancel_reason"] == "고객 취소"
+    # D46: 전 WO 취소 후에도 confirmed_at 유지, 상태는 OPEN
+    d = (await client.get(f"{API}/so/{so['id']}", headers=admin_headers)).json()
+    assert d["status"] == "OPEN" and d["confirmed_at"] == confirmed_at
+
+
+@pytest.mark.asyncio
+async def test_unhandled_exception_is_contract_500(admin_headers: dict[str, str]) -> None:
+    """D52: 라벨 훅 예외 → 500 INTERNAL_ERROR 계약 형식 + X-Request-Id, 발행은 롤백."""
+    from httpx import ASGITransport
+
+    from app.main import app
+
+    async def boom(session: AsyncSession, wo: WorkOrder, issued_by: int | None) -> None:
+        raise RuntimeError("printer driver exploded")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as c:
+        m = await setup_master(c, admin_headers, routings=("NONE",))
+        so = await make_so(
+            c,
+            admin_headers,
+            m,
+            lines=[{"item_id": m["item"]["id"], "print_method": "NONE", "qty": 5}],
+        )
+        drafts = (await c.post(f"{API}/so/{so['id']}/propose-wo", headers=admin_headers)).json()[
+            "items"
+        ]
+        saved = ports._label_issuer
+        ports.set_label_issuer(boom)
+        try:
+            res = await c.post(
+                f"{API}/so/{so['id']}/issue-wo",
+                headers={**admin_headers, "X-Request-Id": "qa-500-trace"},
+                json={"drafts": drafts},
+            )
+        finally:
+            ports.set_label_issuer(saved)
+        assert res.status_code == 500, res.text
+        assert res.json() == {"code": "INTERNAL_ERROR", "message": "서버 오류", "detail": []}
+        assert res.headers.get("x-request-id") == "qa-500-trace"
+        d = (await c.get(f"{API}/so/{so['id']}", headers=admin_headers)).json()
+        assert d["wo_count"] == 0 and d["status"] == "OPEN" and d["confirmed_at"] is None

@@ -325,7 +325,9 @@ async def _check_designs(
 async def issue_wo(
     session: AsyncSession, so_key: str, drafts: list[S.WoDraft], user: AppUser
 ) -> tuple[SalesOrder, list[WorkOrder]]:
-    so = await so_service.resolve_so(session, so_key)
+    # D43: SO 행 잠금 → 잠금 뒤 검증(이미 발행된 라인 → 409 WO_ALREADY_ISSUED). 같은 SO 의 동시
+    # 발행은 여기서 직렬화된다. 잠금은 commit 까지.
+    so = await so_service.resolve_so(session, so_key, for_update=True)
     if so.status not in so_service.SO_EDITABLE:
         raise state_conflict(f"수주 상태 {so.status} — WO 를 발행할 수 없습니다")
     lines, items, routings = await _validate_drafts(session, so, drafts)
@@ -368,7 +370,7 @@ async def issue_wo(
             steps.append(step)
         await session.flush()
         recalc.recalc_wo(wo, steps)
-        await ports.issue_labels_for_wo(session, wo)
+        await ports.issue_labels_for_wo(session, wo, user.id)
         created.append(wo)
 
     if so.confirmed_at is None:
@@ -423,12 +425,15 @@ async def resume_wo(session: AsyncSession, key: str) -> WorkOrder:
     return await _finish(session, wo)
 
 
-async def cancel_wo(session: AsyncSession, key: str, reason: str) -> WorkOrder:
+async def cancel_wo(session: AsyncSession, key: str, reason: str, user: AppUser) -> WorkOrder:
+    """취소 사유는 ``cancel_reason``(0007, F33). ``hold_reason`` 은 보류 이력으로 남긴다."""
     wo = await resolve_wo(session, key)
     if wo.status not in CANCELLABLE:
         raise state_conflict(f"작업지시 상태 {wo.status} — 취소할 수 없습니다")
     wo.status = "CANCELLED"
-    wo.hold_reason = reason  # 취소 사유 저장처 (db-schema 에 wo.cancel_reason 없음 → 보고)
+    wo.cancel_reason = reason
+    wo.cancelled_at = datetime.now(UTC)
+    wo.cancelled_by = user.id
     return await _finish(session, wo)
 
 

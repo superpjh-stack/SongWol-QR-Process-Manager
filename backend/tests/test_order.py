@@ -430,3 +430,39 @@ async def test_audit_log_sales_order(client: AsyncClient, admin_headers: dict[st
             .all()
         )
         assert any(r.action == "INSERT" for r in line_rows)
+
+
+@pytest.mark.asyncio
+async def test_patch_read_only_fields(client: AsyncClient, admin_headers: dict[str, str]) -> None:
+    """DEF-QA1-S1-001: PATCH 에 불변 필드 → 422 READ_ONLY_FIELD (so · customers · printers 공통)."""
+    m = await setup_master(client, admin_headers)
+    so = await make_so(client, admin_headers, m)
+    res = await client.patch(
+        f"{API}/so/{so['id']}", headers=admin_headers, json={"code": "SO-000101-0001", "memo": "x"}
+    )
+    assert res.status_code == 422 and res.json()["code"] == "READ_ONLY_FIELD", res.text
+    assert res.json()["detail"][0]["loc"] == ["body", "code"]
+    res = await client.patch(f"{API}/so/{so['id']}", headers=admin_headers, json={"customer_id": 1})
+    assert res.status_code == 422 and res.json()["code"] == "READ_ONLY_FIELD"
+    res = await client.patch(f"{API}/so/{so['id']}", headers=admin_headers, json={"memo": "ok"})
+    assert res.status_code == 200 and res.json()["memo"] == "ok"
+    cid = m["customer"]["id"]
+    res = await client.patch(f"{API}/customers/{cid}", headers=admin_headers, json={"code": "X"})
+    assert res.status_code == 422 and res.json()["code"] == "READ_ONLY_FIELD"
+    res = await client.patch(f"{API}/customers/{cid}", headers=admin_headers, json={"id": 9})
+    assert res.status_code == 422 and res.json()["code"] == "READ_ONLY_FIELD"
+    res = await client.patch(
+        f"{API}/items/{m['item']['id']}", headers=admin_headers, json={"code": "X"}
+    )
+    assert res.status_code == 422 and res.json()["code"] == "READ_ONLY_FIELD"
+    pid = uniq("LP")
+    res = await client.post(
+        f"{API}/printers",
+        headers=admin_headers,
+        json={"id": pid, "name": "테스트", "host": "192.168.0.10", "purpose": "PACKING"},
+    )
+    if res.status_code == 201:  # 개발B 라우터가 있을 때만
+        res = await client.patch(
+            f"{API}/printers/{pid}", headers=admin_headers, json={"id": "OTHER"}
+        )
+        assert res.status_code == 422 and res.json()["code"] == "READ_ONLY_FIELD"

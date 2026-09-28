@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import permissions as P
-from app.api.deps import Session, require_roles
+from app.api.deps import Principal, Session, require_roles
 from app.api.v1.schemas import order as S
 from app.api.v1.schemas.common import Page
 from app.api.v1.schemas.scan import ScanEventSummary
@@ -78,11 +78,14 @@ async def resume_wo(key: str, session: AsyncSession = Session) -> S.WorkOrder:
     return await _out(session, await wo_service.resume_wo(session, key))
 
 
-@router.post("/{key}/cancel", response_model=S.WorkOrder, dependencies=[_m])
+@router.post("/{key}/cancel", response_model=S.WorkOrder)
 async def cancel_wo(
-    key: str, body: S.ReasonRequest, session: AsyncSession = Session
+    key: str, body: S.ReasonRequest, principal: Principal = _m, session: AsyncSession = Session
 ) -> S.WorkOrder:
-    return await _out(session, await wo_service.cancel_wo(session, key, body.reason))
+    assert principal.user is not None  # _m 은 JWT 전용
+    return await _out(
+        session, await wo_service.cancel_wo(session, key, body.reason, principal.user)
+    )
 
 
 @router.post("/{key}/close", response_model=S.WorkOrder, dependencies=[_m])

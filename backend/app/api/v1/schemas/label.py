@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import AliasChoices, ConfigDict, Field
 
-from app.api.v1.schemas.common import ApiModel, CodeStr, KstDateTime
+from app.api.v1.schemas.common import ApiModel, CodeStr, KstDateTime, read_only_fields
 from app.api.v1.schemas.master import UserSummary
 from app.api.v1.schemas.order import LabelJob, LabelType
 
@@ -34,6 +34,8 @@ class PrinterCreate(ApiModel):
 
 class PrinterUpdate(ApiModel):
     """독립 정의 (ts-types §13 CD-2). PATCH 는 보낸 필드만."""
+
+    _read_only = read_only_fields("id", "active")
 
     name: str | None = Field(default=None, min_length=1, max_length=50)
     host: str | None = Field(default=None, min_length=1, max_length=100)
@@ -67,6 +69,7 @@ class LabelTemplate(ApiModel):
 
 
 class LabelTemplateUpdate(ApiModel):
+    _read_only = read_only_fields("label_type", "format", "version", "updated_at", "updated_by")
     body: str = Field(min_length=1)
 
 

@@ -4,7 +4,14 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from app.api.v1.schemas.common import ApiModel, CodeStr, KstDateTime, LoginIdStr, Page
+from app.api.v1.schemas.common import (
+    ApiModel,
+    CodeStr,
+    KstDateTime,
+    LoginIdStr,
+    Page,
+    read_only_fields,
+)
 from app.api.v1.schemas.label_job import LabelJob
 
 PrintMethodCode = (
@@ -49,6 +56,8 @@ class CustomerAddressInput(ApiModel):
 class CustomerAddressUpdate(ApiModel):
     """PATCH 용 (보낸 필드만). ts-types 에 별도 이름 없음 → Partial<CustomerAddressInput>."""
 
+    _read_only = read_only_fields("id", "customer_id")
+
     label: str | None = Field(default=None, min_length=1, max_length=50)
     receiver: str | None = Field(default=None, max_length=50)
     phone: str | None = Field(default=None, max_length=30)
@@ -84,6 +93,7 @@ class CustomerCreate(ApiModel):
 
 
 class CustomerUpdate(ApiModel):
+    _read_only = read_only_fields("id", "code", "active", "created_at", "updated_at")
     name: str | None = Field(default=None, min_length=1, max_length=100)
     contact_name: str | None = Field(default=None, max_length=50)
     phone: str | None = Field(default=None, max_length=30)
@@ -124,6 +134,7 @@ class ItemCreate(ApiModel):
 
 
 class ItemUpdate(ApiModel):
+    _read_only = read_only_fields("id", "code", "active", "created_at", "updated_at")
     name: str | None = Field(default=None, min_length=1, max_length=100)
     item_group: CodeStr | None = Field(default=None, min_length=1, max_length=30)
     spec: str | None = Field(default=None, max_length=50)
@@ -149,6 +160,8 @@ class ItemGroupCreate(ApiModel):
 class ItemGroupUpdate(ApiModel):
     """PATCH /item-groups/{code} (admin #9). ts-types 에 이름 없음 → 보고."""
 
+    _read_only = read_only_fields("code", "active")
+
     name: str | None = Field(default=None, min_length=1, max_length=50)
 
 
@@ -173,6 +186,7 @@ class ProcessCreate(ApiModel):
 
 
 class ProcessUpdate(ApiModel):
+    _read_only = read_only_fields("code", "active")
     name: str | None = Field(default=None, min_length=1, max_length=30)
     seq: int | None = Field(default=None, ge=0, le=32767)
     requires_equipment: bool | None = None
@@ -201,6 +215,7 @@ class PrintMethodCreate(ApiModel):
 
 
 class PrintMethodUpdate(ApiModel):
+    _read_only = read_only_fields("code", "skips_p30", "active")
     name: str | None = Field(default=None, min_length=1, max_length=30)
     equip_types: list[EquipType] | None = None
 
@@ -222,6 +237,7 @@ class EquipmentCreate(ApiModel):
 
 
 class EquipmentUpdate(ApiModel):
+    _read_only = read_only_fields("id", "code", "active")
     name: str | None = Field(default=None, min_length=1, max_length=50)
     process_code: CodeStr | None = Field(default=None, min_length=1, max_length=3)
     equip_type: EquipType | None = None
@@ -258,6 +274,7 @@ class RoutingCreate(ApiModel):
 
 
 class RoutingUpdate(ApiModel):
+    _read_only = read_only_fields("id", "item_group", "print_method", "steps")
     active: bool | None = None
 
 
@@ -289,6 +306,7 @@ class StationCreate(ApiModel):
 
 
 class StationUpdate(ApiModel):
+    _read_only = read_only_fields("id", "api_key_prefix", "last_seen_at", "active", "offline_state")
     type: StationType | None = None
     process_code: CodeStr | None = Field(default=None, max_length=3)
     location: str | None = Field(default=None, max_length=100)
@@ -333,6 +351,9 @@ class UserCreate(ApiModel):
 
 
 class UserUpdate(ApiModel):
+    _read_only = read_only_fields(
+        "id", "login_id", "card_code", "active", "has_pin", "has_password", "created_at"
+    )
     name: str | None = Field(default=None, min_length=1, max_length=50)
     role: Role | None = None
 
