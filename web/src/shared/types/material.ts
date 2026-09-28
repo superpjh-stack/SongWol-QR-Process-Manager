@@ -26,6 +26,7 @@ export interface ReceiptCreate {
   vendor_barcode?: string
   received_at?: string
   worker_card?: string
+  quarantine_memo?: string // S3 수정: DEF-QA2-S3-002
 } // event_uuid: STATION 필수 (§13.6)
 export interface ReceiptSummary {
   id: number

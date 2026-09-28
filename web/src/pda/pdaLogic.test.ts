@@ -76,6 +76,40 @@ describe('buildReceiveScanRequest', () => {
     expect(req.qty_box).toBe(10)
     expect(req.extra).toEqual({ inspection: 'COND', vendor: '협력사A', variance_reason: '지시수량 초과' })
   })
+
+  it('DEF-QA2-S3-002: inspection=FAIL + 격리 메모가 있으면 extra.quarantine_memo 로 함께 싣는다', () => {
+    const req = buildReceiveScanRequest({
+      stationId: 'K-P20-1',
+      workerCard: 'US-0007',
+      code: 'WO-261001-0012',
+      check: '7K3F',
+      qty: 50,
+      boxCount: null,
+      inspection: 'FAIL',
+      quarantineMemo: '박스 훼손·오염 발견',
+      inputVia: 'HID',
+      eventUuid: 'e3',
+      clientSeq: 3,
+    })
+    expect(req.extra).toEqual({ inspection: 'FAIL', quarantine_memo: '박스 훼손·오염 발견' })
+  })
+
+  it('inspection≠FAIL 이면 격리 메모를 입력해도 싣지 않는다', () => {
+    const req = buildReceiveScanRequest({
+      stationId: 'K-P20-1',
+      workerCard: 'US-0007',
+      code: 'WO-261001-0012',
+      check: '7K3F',
+      qty: 50,
+      boxCount: null,
+      inspection: 'PASS',
+      quarantineMemo: '실수로 입력된 메모',
+      inputVia: 'HID',
+      eventUuid: 'e4',
+      clientSeq: 4,
+    })
+    expect(req.extra).toEqual({ inspection: 'PASS' })
+  })
 })
 
 describe('buildMapScanRequest', () => {

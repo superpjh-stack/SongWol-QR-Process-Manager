@@ -644,6 +644,38 @@ async def test_scan_receive_partial_then_full_and_fail_quarantines(
     assert detail2["qty_received"] == 0
 
 
+async def test_scan_receive_fail_with_quarantine_memo(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    """S3 수정 웨이브(DEF-QA2-S3-002): FAIL RECEIVE 가 `extra.quarantine_memo` 를 받으면 LOT
+    자동 격리와 **같은 요청**에서 메모가 저장된다 — 별도로 `POST /lots/{code}/quarantine` 을
+    부를 필요가 없다(그 경로는 이미 QUARANTINE 이라 예전엔 항상 409 였다)."""
+    p20_station, p20_key = await ensure_station(
+        uniq("T-K-P20-"), type_="KIOSK", process_code="P20"
+    )
+    worker = await _worker_card()
+    _m, wo = await _issued_wo(client, admin_headers)
+
+    body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo["code"],
+        action="RECEIVE",
+        qty_good=50,
+        extra={"inspection": "FAIL", "quarantine_memo": "박스 훼손·오염 발견"},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["receipt"]["lot"]["status"] == "QUARANTINE"
+    assert data["receipt"]["lot"]["quarantine_memo"] == "박스 훼손·오염 발견"
+
+    lot_code = data["receipt"]["lot"]["code"]
+    res = await client.get(f"{API}/lots/{lot_code}", headers=admin_headers)
+    assert res.status_code == 200
+    assert res.json()["quarantine_memo"] == "박스 훼손·오염 발견"
+
+
 # ======================================================================
 # S3: PACK/SHIP/MAP 공통 파이프라인 헬퍼
 # ======================================================================
@@ -816,6 +848,200 @@ async def test_scan_ship_cross_so_mismatch_rejected(
     assert res.status_code == 200, res.text
     data = res.json()
     assert data["result"] == "REJECT" and data["code"] == "BOX_SO_MISMATCH"
+
+
+async def _wo_ready_for_pack_with_so(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+    """``_wo_ready_for_pack`` 와 같지만 ``_m``(item 코드 등)·``so`` 도 돌려준다(재고·SO 확인용)."""
+    p30_station, p30_key, eq_code = await _setup_p30_station_and_equipment(client, admin_headers)
+    worker = await _worker_card()
+    m, so, wo = await _issued_wo_with_so(client, admin_headers)
+    wo_code = wo["code"]
+
+    p20_station, p20_key = await ensure_station(
+        uniq("T-K-P20-"), type_="KIOSK", process_code="P20"
+    )
+    body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo_code,
+        action="RECEIVE",
+        qty_good=500,
+        extra={"inspection": "PASS"},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=body)
+    assert res.status_code == 200 and res.json()["result"] == "OK", res.text
+
+    body = scan_body(
+        station_id=p30_station,
+        worker_card=worker,
+        code=wo_code,
+        action="DONE",
+        equipment_code=eq_code,
+        qty_good=500,
+        qty_bad=0,
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p30_key}, json=body)
+    assert res.status_code == 200 and res.json()["result"] == "OK", res.text
+    return wo_code, worker, m, so
+
+
+async def test_scan_ship_batch_merges_same_so_tracking_no_two_boxes(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    """DEF-QA1-S3-001 = DEF-QA2-S3-004 회귀 테스트 — QA 재현 시나리오 그대로: 박스 2개(같은
+    SO·같은 tracking_no)를 `/scan/batch` 한 번에 SHIP 이벤트 2건으로 보낸다(PDA 실사용 경로,
+    박스 1개당 SHIP 이벤트 1건). 예전 코드는 `apply_ship` 이 `status=="READY"` 만 매치해서 매
+    이벤트마다 새 shipment 를 만들었다(같은 송장인데 shipment 2건으로 쪼개짐) — 이 테스트는
+    정확히 **1건**의 shipment 로 병합되고, 재고·WO 반영이 두 박스분 정확히 한 번씩(이중
+    계상 없이) 됐는지를 확인한다."""
+    wo_code, worker, m, so = await _wo_ready_for_pack_with_so(client, admin_headers)
+    p50_station, p50_key = await ensure_station(
+        uniq("T-K-P50-"), type_="KIOSK", process_code="P50"
+    )
+    box_codes = []
+    for qty_box in (300, 200):
+        body = scan_body(
+            station_id=p50_station,
+            worker_card=worker,
+            code=wo_code,
+            action="PACK",
+            qty_box=qty_box,
+        )
+        res = await client.post(f"{API}/scan", headers={"X-Station-Key": p50_key}, json=body)
+        assert res.status_code == 200, res.text
+        box_codes.append(res.json()["box"]["code"])
+
+    p60_station, p60_key = await ensure_station(
+        uniq("T-K-P60-"), type_="KIOSK", process_code="P60"
+    )
+    tracking_no = uniq("TRK")
+    events = [
+        scan_body(
+            station_id=p60_station,
+            worker_card=worker,
+            code=box_code,
+            action="SHIP",
+            extra={"tracking_no": tracking_no},
+        )
+        for box_code in box_codes
+    ]
+    res = await client.post(
+        f"{API}/scan/batch", headers={"X-Station-Key": p60_key}, json={"events": events}
+    )
+    assert res.status_code == 200, res.text
+    results = res.json()["results"]
+    assert len(results) == 2
+    for r in results:
+        assert r["response"]["result"] == "OK", r
+    shipment_ids = {r["response"]["shipment"]["id"] for r in results}
+    assert len(shipment_ids) == 1, "두 SHIP 이벤트가 같은 shipment 로 병합돼야 한다"
+
+    shipment_id = shipment_ids.pop()
+    detail = (
+        await client.get(f"{API}/shipments/{shipment_id}", headers=admin_headers)
+    ).json()
+    assert detail["box_count"] == 2
+    assert detail["qty_total"] == 500  # 300+200, 이중 계상 없이 정확히 한 번씩
+
+    listing = await client.get(
+        f"{API}/shipments", headers=admin_headers, params={"so_code": so["code"]}
+    )
+    assert listing.json()["total"] == 1  # shipment 행이 2건으로 쪼개지지 않았다
+
+    wo_detail = (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()
+    assert wo_detail["status"] == "SHIPPED" and wo_detail["qty_shipped"] == 500
+
+    so_detail = (await client.get(f"{API}/so/{so['id']}", headers=admin_headers)).json()
+    assert so_detail["status"] == "SHIPPED"
+
+    stock = (
+        await client.get(f"{API}/stock", headers=admin_headers, params={"q": m["item"]["code"]})
+    ).json()["items"][0]
+    assert stock["qty_on_hand"] == 0  # RECEIVE(+500) · SHIP(-500) 정확히 한 번씩
+
+
+async def test_scan_ship_adds_box_to_already_shipped_shipment_no_double_count(
+    admin_headers: dict[str, str], client: AsyncClient
+) -> None:
+    """QA① 이 "단순히 매치 범위를 `status IN (READY, SHIPPED)` 로 넓히면 이미 반영된 박스까지
+    재고·P60 누계를 이중 반영한다"고 직접 확인했던 시나리오의 회귀 테스트다. 먼저 박스 2개를
+    같은 tracking_no 로 SHIP 해 shipment 를 SHIPPED 로 확정한 뒤, **별도의 이후 스캔**으로 세
+    번째 박스를 같은 SO·같은 tracking_no 로 SHIP 한다 — 이미 SHIPPED 인 shipment 에 합류하는
+    경우다. 이때 먼저 반영된 두 박스가 재고·WO 누계에 다시 반영되면 안 된다(박스 단위
+    `shipment_box.reconciled_at` 델타 추적으로 방지)."""
+    wo_code, worker, m, so = await _wo_ready_for_pack_with_so(client, admin_headers)
+    p50_station, p50_key = await ensure_station(
+        uniq("T-K-P50-"), type_="KIOSK", process_code="P50"
+    )
+    box_codes = []
+    for qty_box in (200, 200, 100):
+        body = scan_body(
+            station_id=p50_station,
+            worker_card=worker,
+            code=wo_code,
+            action="PACK",
+            qty_box=qty_box,
+        )
+        res = await client.post(f"{API}/scan", headers={"X-Station-Key": p50_key}, json=body)
+        assert res.status_code == 200, res.text
+        box_codes.append(res.json()["box"]["code"])
+
+    p60_station, p60_key = await ensure_station(
+        uniq("T-K-P60-"), type_="KIOSK", process_code="P60"
+    )
+    tracking_no = uniq("TRK")
+
+    # 박스 1·2 를 먼저 같은 tracking_no 로 SHIP → shipment SHIPPED 로 확정(400)
+    for box_code in box_codes[:2]:
+        body = scan_body(
+            station_id=p60_station,
+            worker_card=worker,
+            code=box_code,
+            action="SHIP",
+            extra={"tracking_no": tracking_no},
+        )
+        res = await client.post(f"{API}/scan", headers={"X-Station-Key": p60_key}, json=body)
+        assert res.status_code == 200, res.text
+        assert res.json()["shipment"]["status"] == "SHIPPED"
+
+    detail_after_two = (
+        await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)
+    ).json()
+    assert detail_after_two["qty_shipped"] == 400
+    shipment_id_after_two = None
+
+    # 박스 3 을 나중에(별도 요청) 같은 tracking_no 로 SHIP → 이미 SHIPPED 인 shipment 에 합류
+    body = scan_body(
+        station_id=p60_station,
+        worker_card=worker,
+        code=box_codes[2],
+        action="SHIP",
+        extra={"tracking_no": tracking_no},
+    )
+    res = await client.post(f"{API}/scan", headers={"X-Station-Key": p60_key}, json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["result"] == "OK"
+    shipment_id_after_two = data["shipment"]["id"]
+    assert data["shipment"]["box_count"] == 3
+    assert data["shipment"]["qty_total"] == 500  # 200+200+100, 이중 계상 없이
+
+    listing = await client.get(
+        f"{API}/shipments", headers=admin_headers, params={"so_code": so["code"]}
+    )
+    assert listing.json()["total"] == 1
+    assert listing.json()["items"][0]["id"] == shipment_id_after_two
+
+    wo_detail = (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()
+    # 400(먼저 반영) + 100(나중 합류분) = 500, 먼저 반영된 400 이 다시 더해지면 안 된다
+    assert wo_detail["status"] == "SHIPPED" and wo_detail["qty_shipped"] == 500
+
+    stock = (
+        await client.get(f"{API}/stock", headers=admin_headers, params={"q": m["item"]["code"]})
+    ).json()["items"][0]
+    assert stock["qty_on_hand"] == 0  # RECEIVE(+500) · SHIP 누계(-500) 정확히, 이중 차감 없이
 
 
 # ======================================================================

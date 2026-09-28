@@ -124,10 +124,15 @@ async def test_receipt_partial_and_fail_quarantine(
     res = await client.get(f"{API}/lots/{lot_code}", headers=admin_headers)
     assert res.status_code == 200 and res.json()["status"] == "QUARANTINE"
 
+    # S3 수정 웨이브(DEF-QA2-S3-002): 이미 QUARANTINE 인 LOT 에 다시 격리 요청해도 409 로
+    # 막지 않고 메모만 멱등하게 갱신한다(FAIL 입고는 항상 자동 격리를 먼저 거치므로, 워커가
+    # 여기 도달하는 시점엔 이미 QUARANTINE 인 게 정상 경로다).
     res = await client.post(
-        f"{API}/lots/{lot_code}/quarantine", headers=admin_headers, json={"memo": "x"}
+        f"{API}/lots/{lot_code}/quarantine", headers=admin_headers, json={"memo": "직물 얼룩"}
     )
-    assert res.status_code == 409  # 이미 격리됨
+    assert res.status_code == 200
+    assert res.json()["status"] == "QUARANTINE"
+    assert res.json()["quarantine_memo"] == "직물 얼룩"
 
     res = await client.post(f"{API}/lots/{lot_code}/release", headers=admin_headers)
     assert res.status_code == 200 and res.json()["status"] == "OK"

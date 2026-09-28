@@ -38,6 +38,7 @@ export interface ScanExtra {
   printer_id?: string
   variance_reason_code?: VarianceReasonCode // §13.5 ⑨
   offline_seq?: number // §13.7 ⑬ PACK
+  quarantine_memo?: string // S3 수정: DEF-QA2-S3-002
 }
 
 export interface ScanRequest {

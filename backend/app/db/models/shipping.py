@@ -86,7 +86,15 @@ class Shipment(Base):
 
 
 class ShipmentBox(Base):
-    """출하 ↔ 박스 원장 (§6.3). UK(box_id) — 1박스 1송장."""
+    """출하 ↔ 박스 원장 (§6.3). UK(box_id) — 1박스 1송장.
+
+    ``reconciled_at`` (S3 수정 웨이브, DEF-QA1-S3-001/DEF-QA2-S3-004): 이 박스의 재고·WO·P60
+    반영이 실제로 적용됐는지를 **박스 단위로** 추적한다. NULL 이면 아직 반영 전(§6.4 합류만
+    되고 확정 대기 — REST ``confirm=false`` 로 모은 박스, 또는 이미 SHIPPED 로 확정된 shipment
+    에 나중 스캔이 합류시켰지만 아직 그 반영 루프를 못 탄 박스). ``apply_ship`` 의 확정
+    (``confirm=True``) 경로는 이 컬럼이 NULL 인 박스만 골라 정확히 한 번씩 반영한 뒤 채운다 —
+    shipment.status 만으로 게이팅하면(예전 방식) 이미 SHIPPED 인 shipment 에 박스가 나중에
+    합류할 때 기존에 반영된 박스까지 다시 반영해 이중 계상되는 문제가 있었다."""
 
     __tablename__ = "shipment_box"
     __table_args__ = (
@@ -100,3 +108,4 @@ class ShipmentBox(Base):
     box_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("pack_box.id", ondelete="RESTRICT"), nullable=False
     )
+    reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

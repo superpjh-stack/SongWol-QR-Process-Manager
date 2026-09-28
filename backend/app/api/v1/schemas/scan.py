@@ -98,6 +98,7 @@ class ScanExtra(ApiModel):
     printer_id: str | None = None
     variance_reason_code: VarianceReasonCode | None = None  # §13.5 ⑨
     offline_seq: int | None = None  # §13.7 ⑬ PACK
+    quarantine_memo: str | None = Field(default=None, max_length=300)  # S3 수정: DEF-QA2-S3-002
 
 
 class ScanRequest(ApiModel):

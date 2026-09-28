@@ -37,6 +37,10 @@ export type BuildReceiveInput = {
   inspection: Inspection
   vendor?: string | null
   varianceReason?: string | null
+  /** FAIL 검수 시 격리 메모(선택) — DEF-QA2-S3-002: `extra.quarantine_memo` 로 실어 보내
+   * inspection=FAIL 자동 격리와 같은 요청에서 저장된다 (ReceiveEntryScreen 이 수집만 하고
+   * 실어 보내지 않던 결함 수정). */
+  quarantineMemo?: string | null
   inputVia: InputVia
   eventUuid: string
   clientSeq: number
@@ -48,6 +52,7 @@ export function buildReceiveScanRequest(input: BuildReceiveInput): ScanRequest {
   const extra: ScanExtra = { inspection: input.inspection }
   if (input.vendor) extra.vendor = input.vendor
   if (input.varianceReason) extra.variance_reason = input.varianceReason
+  if (input.inspection === 'FAIL' && input.quarantineMemo) extra.quarantine_memo = input.quarantineMemo
   return {
     event_uuid: input.eventUuid,
     scanned_at: input.scannedAt ?? nowKstIso(),

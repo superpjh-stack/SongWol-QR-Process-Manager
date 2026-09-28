@@ -46,6 +46,7 @@ class ReceiptCreate(ApiModel):
     vendor_barcode: str | None = Field(default=None, max_length=64)
     received_at: KstDateTime | None = None
     worker_card: CodeStr | None = Field(default=None, max_length=10)
+    quarantine_memo: str | None = Field(default=None, max_length=300)  # S3 수정: DEF-QA2-S3-002
 
 
 class ReceiptSummary(ApiModel):

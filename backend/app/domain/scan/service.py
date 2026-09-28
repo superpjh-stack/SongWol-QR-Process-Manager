@@ -617,10 +617,15 @@ async def apply_receive(
     worker: AppUser | None,
     station: Station | None,
     event_uuid: uuid.UUID | None,
+    quarantine_memo: str | None = None,
 ) -> tuple[InboundLot, MaterialReceipt]:
     """``decision.kind == "APPLY"`` 일 때만 부른다. lot·receipt·stock_txn 생성 + P20 단계 갱신 +
     WO.qty_received/receipt_status 갱신 + recalc. 커밋은 호출자 몫(§13.7 원칙과 동일하게 두
-    엔트리포인트가 각자의 트랜잭션 경계를 결정한다)."""
+    엔트리포인트가 각자의 트랜잭션 경계를 결정한다).
+
+    ``quarantine_memo`` (S3 수정 웨이브, DEF-QA2-S3-002): FAIL 검수로 자동 격리될 때 그 자리에서
+    사유를 함께 저장한다(§5.4 ``extra.quarantine_memo``, `/scan` · `POST /receipts` 공통). FAIL 이
+    아니면 무시한다(§5.2 5-RECEIVE 는 PASS/COND 는 격리 자체가 없다)."""
     lot = InboundLot(
         code=await next_code(session, "LT", received_at),
         item_id=item.id,
@@ -628,6 +633,7 @@ async def apply_receive(
         received_at=received_at,
         qty=qty,
         status="QUARANTINE" if inspection == "FAIL" else "OK",
+        quarantine_memo=quarantine_memo if inspection == "FAIL" else None,
     )
     session.add(lot)
     await session.flush()
@@ -871,8 +877,20 @@ async def apply_ship(
     event_uuid: uuid.UUID | None,
     confirm: bool = True,
 ) -> Shipment:
-    """§6.4: 같은 SO·같은 tracking_no 의 READY shipment 가 있으면 합류, 없으면 생성. 박스마다
-    WO 가 다를 수 있어(§13.6, 같은 SO 여러 WO) WO 별로 P60 단계를 따로 갱신한다."""
+    """§6.4: 같은 SO·같은 tracking_no 의 shipment 가 있으면(READY 든 이미 SHIPPED 든) 합류,
+    없으면 생성. 박스마다 WO 가 다를 수 있어(§13.6, 같은 SO 여러 WO) WO 별로 P60 단계를 따로
+    갱신한다.
+
+    DEF-QA1-S3-001 = DEF-QA2-S3-004 재설계: `/scan`·`/scan/batch` 는 항상 `confirm=True` 로 이
+    함수를 부르기 때문에(§13.6 ① "1이벤트=1송장 확정") shipment 가 `READY` 로 머무는 순간이
+    전혀 없었다 — 예전 코드는 매치 조건이 `status=="READY"` 뿐이라 두 번째 박스 스캔이 첫
+    스캔이 만든(이미 SHIPPED 인) shipment 를 찾지 못해 매번 새 shipment 를 만들었다(합류
+    실패). 그렇다고 매치 범위를 `status IN (READY, SHIPPED)` 로 넓히기만 하면, "이 shipment
+    에 실제로 붙은 박스 전부"를 재고/WO/P60 갱신 대상으로 삼던 예전 반영 루프가 **이미 반영된
+    박스까지 다시 반영**해 이중 계상하는 새 버그를 만든다(QA① 이 코드 추적으로 확인). 그래서
+    "합류 매칭"과 "반영 대상 계산"을 분리한다 — 매칭은 상태로 넓히되, 반영은 아래에서
+    `shipment_box.reconciled_at IS NULL` 인 박스(= 아직 한 번도 반영되지 않은 박스)만 골라
+    정확히 한 번씩 처리하고 그 자리에서 `reconciled_at` 을 채운다."""
     assert boxes
     now = datetime.now(UTC)
     first_wo = await session.get(WorkOrder, boxes[0].wo_id)
@@ -885,7 +903,7 @@ async def apply_ship(
             select(Shipment).where(
                 Shipment.so_id == so.id,
                 Shipment.tracking_no == tracking_no,
-                Shipment.status == "READY",
+                Shipment.status.in_(("READY", "SHIPPED")),
             )
         )
     ).scalar_one_or_none()
@@ -917,17 +935,27 @@ async def apply_ship(
             shipment.worker_id = worker.id
         if station is not None:
             shipment.station_id = station.id
-        # confirm=False 로 여러 번에 걸쳐 모은 뒤 마지막에 confirm=True 로 부를 수 있다
-        # (§6.4 합류) — WO qty_shipped·P60·재고 반영은 "이번 호출의 boxes" 가 아니라
-        # "이 shipment 에 실제로 붙은 박스 전부"를 대상으로 정확히 한 번씩 해야 한다.
-        all_boxes = (
-            (await session.execute(select(PackBox).where(PackBox.shipment_id == shipment.id)))
-            .scalars()
-            .all()
-        )
+        # confirm=False 로 여러 번에 걸쳐 모으거나(§6.4 합류, REST 2단계), 이미 SHIPPED 로
+        # 확정된 shipment 에 나중 스캔이 박스를 합류시킬 수도 있다(§13.6 ①, PDA 연속 스캔) —
+        # 어느 경우든 WO qty_shipped·P60·재고 반영은 "이 shipment 에 실제로 붙은 박스 전부"가
+        # 아니라 "아직 반영되지 않은(shipment_box.reconciled_at IS NULL) 박스만"을 대상으로
+        # 정확히 한 번씩 해야 한다 — 그래야 이미 반영된 박스가 재확정 때마다 다시 반영되는
+        # 이중 계상(DEF-QA1-S3-001 재설계 중 QA① 이 발견한 회귀)을 피한다.
+        pending_rows = (
+            await session.execute(
+                select(PackBox, ShipmentBox)
+                .join(ShipmentBox, ShipmentBox.box_id == PackBox.id)
+                .where(
+                    ShipmentBox.shipment_id == shipment.id,
+                    ShipmentBox.reconciled_at.is_(None),
+                )
+            )
+        ).all()
         by_wo: dict[int, list[PackBox]] = {}
-        for b in all_boxes:
+        pending_sb_by_box: dict[int, ShipmentBox] = {}
+        for b, sb in pending_rows:
             by_wo.setdefault(b.wo_id, []).append(b)
+            pending_sb_by_box[b.id] = sb
         for wo_id, wo_boxes in by_wo.items():
             wo = await session.get(WorkOrder, wo_id)
             assert wo is not None
@@ -967,6 +995,8 @@ async def apply_ship(
                 ref_id=shipment.id,
                 created_by=worker.id if worker else None,
             )
+            for b in wo_boxes:
+                pending_sb_by_box[b.id].reconciled_at = now
         await recalc.recalc_so(session, so)
         if so.status == "SHIPPED" and so.shipped_at is None:
             so.shipped_at = now
@@ -1308,6 +1338,7 @@ async def handle_scan(
                 worker=worker,
                 station=station,
                 event_uuid=body.event_uuid,
+                quarantine_memo=extra.quarantine_memo,
             )
             if worker is not None:
                 receipt_resp = receipt_out(receipt, lot, item, worker, wo)

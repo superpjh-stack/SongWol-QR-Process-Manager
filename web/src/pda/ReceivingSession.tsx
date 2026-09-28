@@ -312,6 +312,7 @@ export function ReceivingSession({ station, processName, bootOffline }: { statio
       inspection,
       vendor: vendor || null,
       varianceReason: reasonToText(varianceReason),
+      quarantineMemo: quarantineMemo || null,
       inputVia: entryInputVia,
       eventUuid: newEventUuid(),
       clientSeq: nextClientSeq(),

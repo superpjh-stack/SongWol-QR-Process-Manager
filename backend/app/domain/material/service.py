@@ -103,6 +103,7 @@ async def create_receipt(
         worker=worker,
         station=principal.station,
         event_uuid=body.event_uuid,
+        quarantine_memo=body.quarantine_memo,
     )
     await session.commit()
     await session.refresh(wo)
@@ -284,14 +285,17 @@ async def get_lot_or_box(session: AsyncSession, code: str) -> S.InboundLot | Any
 
 
 async def quarantine_lot(session: AsyncSession, code: str, memo: str) -> S.InboundLot:
+    """A3-08 (§7.4). S3 수정 웨이브(DEF-QA2-S3-002): **멱등** — 이미 QUARANTINE 인 LOT 을 다시
+    격리 요청해도 409 로 막지 않고 메모만 갱신한다. FAIL 입고는 서버가 동기적으로 자동
+    격리하므로(§6.3 dispatch_receive), 워커가 이 엔드포인트에 도달하는 시점엔 항상 이미
+    QUARANTINE 인 게 정상 경로다 — "방금 한 일을 확인"하는 호출을 409 로 막는 건 불필요한
+    마찰이라 QA가 이번 웨이브에서 제거 대상으로 지목했다."""
     code = normalize_code(code)
     lot = (
         await session.execute(select(InboundLot).where(InboundLot.code == code))
     ).scalar_one_or_none()
     if lot is None:
         raise not_found("LOT_NOT_FOUND", "LOT", code)
-    if lot.status == "QUARANTINE":
-        raise ApiError(409, "STATE_CONFLICT", "이미 격리된 LOT 입니다")
     lot.status = "QUARANTINE"
     lot.quarantine_memo = memo
     await session.commit()
