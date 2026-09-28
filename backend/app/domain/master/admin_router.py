@@ -11,6 +11,7 @@ from app.api import permissions as P
 from app.api.deps import CurrentStation, Principal, Session, require_roles
 from app.api.v1.schemas import master as S
 from app.api.v1.schemas.common import Page
+from app.core.errors import forbidden
 from app.db.models.master import Station
 from app.domain.common.listing import PageDep, PageParams
 from app.domain.master import admin_service as svc
@@ -20,6 +21,7 @@ router = APIRouter(tags=["master-admin"])
 _r = Depends(require_roles(*P.ADMIN_MASTER_READ))
 _w = Depends(require_roles(*P.ADMIN_MASTER_WRITE))
 _w_principal = _w
+_workers_r = Depends(require_roles(*P.ADMIN_MASTER_READ, station=True))
 
 
 # ======================================================================
@@ -30,6 +32,20 @@ async def station_me(
     station: Station = CurrentStation, session: AsyncSession = Session
 ) -> S.Station:
     return await svc.station_out(session, station)
+
+
+@router.get("/stations/{station_id}/workers", response_model=list[S.UserSummary])
+async def station_workers(
+    station_id: str,
+    principal: Principal = _workers_r,
+    session: AsyncSession = Session,
+) -> list[S.UserSummary]:
+    """[S4] admin #14 인근(§13.2 shopfloor ④): ADMIN/MANAGER 전체 조회, STATION 은 자기 단말만."""
+    if principal.is_station:
+        assert principal.station is not None
+        if principal.station.id != station_id.strip().upper():
+            raise forbidden()
+    return [svc.user_summary(u) for u in await svc.list_station_workers(session)]
 
 
 @router.get("/stations", response_model=Page[S.Station], dependencies=[_r])
@@ -164,3 +180,21 @@ async def put_code_settings(
 ) -> S.CodeSettings:
     assert principal.user is not None
     return await svc.put_code_settings(session, body, principal.user.id)
+
+
+# ======================================================================
+# 단말 미접속 임계값 (admin #14 [S4])
+# ======================================================================
+@router.get("/settings/station-offline", response_model=S.StationOfflineSettings, dependencies=[_r])
+async def get_station_offline_settings(session: AsyncSession = Session) -> S.StationOfflineSettings:
+    return await svc.get_station_offline_settings(session)
+
+
+@router.put("/settings/station-offline", response_model=S.StationOfflineSettings)
+async def put_station_offline_settings(
+    body: S.StationOfflineSettings,
+    principal: Principal = _w_principal,
+    session: AsyncSession = Session,
+) -> S.StationOfflineSettings:
+    assert principal.user is not None
+    return await svc.put_station_offline_settings(session, body, principal.user.id)

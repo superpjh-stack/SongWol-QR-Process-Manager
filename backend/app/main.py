@@ -6,7 +6,8 @@
 """
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -25,14 +26,32 @@ from app.core.errors import ApiError
 from app.core.request_context import current_request_id, current_user_id, new_request_id
 from app.db.bootstrap import bootstrap
 from app.db.session import engine
+from app.domain.board import scheduler as delay_scheduler
+from app.domain.board.router import router as board_router
+from app.ws.router import router as ws_router
 
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
 bootstrap()
 
-app = FastAPI(title=settings.app_name, version="0.0.1")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """S4: 지연 감지 잡(§6.5) 기동/종료. 스캔·발행 등은 요청마다 즉시 처리되므로 그 외에는
+    이 앱에 다른 백그라운드 작업이 없다."""
+    delay_scheduler.start_scheduler()
+    try:
+        yield
+    finally:
+        delay_scheduler.stop_scheduler()
+
+
+app = FastAPI(title=settings.app_name, version="0.0.1", lifespan=lifespan)
 app.include_router(api_v1)
+app.include_router(board_router, prefix="/api/v1")
+# ``/ws/board`` 는 계약상 ``/api/v1`` 밖이다 (api-contract §8) — prefix 없이 붙인다.
+app.include_router(ws_router)
 
 
 IMPORT_PREVIEW_PATH = "/api/v1/master/import/preview"

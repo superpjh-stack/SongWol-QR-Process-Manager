@@ -35,3 +35,14 @@ WO_MANAGE = ("ADMIN", "MANAGER")  # hold · resume · cancel · close · split (
 # 입고·바코드 매핑 (A3-01/02) · 포장·발송 (A4-01~04) — §4/§13.8: SALES·WORKER 는 JWT 로 쓸 수
 # 없다(STATION 만 W). ORDER_WRITE 와 다르다(SO 는 SALES 가 쓴다).
 MATERIAL_WRITE = ("ADMIN", "MANAGER")
+
+# 대시보드·현황판 (B5-01) · 실적 집계 (B5-04) — §4
+DASHBOARD_READ = ALL_USER_ROLES  # + STATION(BOARD)
+REPORT_READ = ALL_USER_ROLES
+
+# 알림 조회·확인 (§4 「알림 조회·확인」): VIEWER 는 조회만, WORKER 는 접근 불가
+NOTIFICATION_READ = ("ADMIN", "MANAGER", "SALES", "VIEWER")
+NOTIFICATION_WRITE = ("ADMIN", "MANAGER", "SALES")
+
+# 감사 로그 (§4 「감사 로그·마이그레이션」) — MIGRATION_READ 와 동일 집합
+AUDIT_READ = MIGRATION_READ

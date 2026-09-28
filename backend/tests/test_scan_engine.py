@@ -115,11 +115,43 @@ def test_out_of_scope_actions_rejected(action: str) -> None:
 
 
 def test_out_of_scope_action_skips_vb_unmapped_check() -> None:
-    """CANCEL 이 미매핑 VB 를 스캔해도 ACTION_NOT_YET_SUPPORTED 여야 한다 (VENDOR_BARCODE_UNMAPPED
-    아님) — 구현 안 된 매핑 조회 결과로 오판하지 않는다."""
+    """REPRINT(여전히 OUT_OF_SCOPE_ACTIONS)는 코드·체크코드 검증조차 없이 즉시 반려한다 —
+    미매핑 VB 를 스캔해도 ACTION_NOT_YET_SUPPORTED 여야 한다(VENDOR_BARCODE_UNMAPPED 아님)."""
+    d = engine.decide(
+        ctx(action="REPRINT", target_type="VB", vb_mapped_wo=False, wo_found=False, steps=())
+    )
+    assert d.code == "ACTION_NOT_YET_SUPPORTED"
+
+
+def test_cancel_now_in_code_validation_path_rejects_unmapped_vb() -> None:
+    """S4: CANCEL 은 더 이상 ``OUT_OF_SCOPE_ACTIONS`` 에 없다(E6 이 관리자 웹 REST 경로
+    ``POST /wo/{id}/events/{event_uuid}/cancel`` 로 실제 구현됐다, admin #28). 다만
+    ``/scan action=CANCEL`` 자체는 여전히 미구현이라 — 코드 검증은 다른 액션과 동일하게
+    받되(더 구체적인 사유를 준다), 그 뒤 IN_SCOPE_ACTIONS 에 없어 결국
+    ACTION_NOT_YET_SUPPORTED 로 반려된다(이 케이스는 그 앞 단계인 VB 매핑 검증에서 먼저
+    걸린다 — 조용한 실패가 아니라 더 정확한 사유)."""
     d = engine.decide(
         ctx(action="CANCEL", target_type="VB", vb_mapped_wo=False, wo_found=False, steps=())
     )
+    assert d.kind == "REJECT"
+    assert d.code == "VENDOR_BARCODE_UNMAPPED"
+
+
+def test_cancel_wo_target_still_action_not_yet_supported() -> None:
+    """WO 코드를 직접 스캔한 CANCEL 은 (체크코드가 맞으면) 여전히 ACTION_NOT_YET_SUPPORTED —
+    ``/scan`` 경로로는 여전히 취소를 구현하지 않는다(관리자 웹 전용, §13.4 admin #28)."""
+    d = engine.decide(
+        ctx(
+            action="CANCEL",
+            target_type="WO",
+            check_present=True,
+            check_valid=True,
+            wo_found=True,
+            wo_status="ISSUED",
+            steps=(),
+        )
+    )
+    assert d.kind == "REJECT"
     assert d.code == "ACTION_NOT_YET_SUPPORTED"
 
 

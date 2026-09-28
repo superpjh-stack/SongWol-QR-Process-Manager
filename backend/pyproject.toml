@@ -22,6 +22,8 @@ dependencies = [
     # 작업지시서 PDF (plan §3, S1-5). 시스템 라이브러리 필요: macOS `brew install pango cairo gdk-pixbuf libffi`,
     # Debian `apt-get install libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 fonts-nanum`
     "weasyprint>=62",
+    # 지연 감지 배치 (api-contract §6.5, S4) — 프로세스 내 10분 잡. 별도 워커/브로커 없음(plan §5.1).
+    "apscheduler>=3.10,<4",
 ]
 
 [project.optional-dependencies]
@@ -67,7 +69,7 @@ exclude = ["^\\.venv/", "^alembic/"]
 [[tool.mypy.overrides]]
 module = [
     "segno", "segno.*", "jose", "jose.*", "passlib", "passlib.*", "openpyxl", "openpyxl.*",
-    "weasyprint", "weasyprint.*",
+    "weasyprint", "weasyprint.*", "apscheduler", "apscheduler.*",
 ]
 ignore_missing_imports = true
 

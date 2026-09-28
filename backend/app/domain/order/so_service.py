@@ -90,8 +90,9 @@ async def list_sales_orders(
     q: str | None,
     sort: str | None,
 ) -> tuple[list[SoView], int]:
-    """ADM-12. ``delay=true`` 는 지연 판정(§6.5)이 단계 데이터에 걸려 있어 후보를 다 읽은 뒤
-    Python 에서 거른다 (파일럿 규모 — 활성 수주 수백 건).
+    """ADM-12. ``delay=true`` 는 0010(S4, RISK-S1-1)부터 ``sales_order.delay_risk`` 캐시 컬럼으로
+    SQL 필터링한다 — 그 컬럼은 지연 감지 잡(§6.5, 10분)이 갱신한다. 상세 응답의 ``delay_risk``
+    (SoView)는 여전히 매 요청 실시간 계산이다.
     """
     stmt = select(SalesOrder).join(Customer, Customer.id == SalesOrder.customer_id)
     if from_ is not None:
@@ -111,14 +112,10 @@ async def list_sales_orders(
         stmt = stmt.where(f)
     stmt = stmt.order_by(*parse_sort(sort, SO_SORT))
 
-    if not delay:
-        rows, total = await paginate(session, stmt, params)
-        return await load_so_views(session, rows), total
-
-    stmt = stmt.where(SalesOrder.status.in_(("OPEN", "IN_PROGRESS", "PARTIAL_SHIPPED")))
-    rows = list((await session.execute(stmt)).scalars().all())
-    views = [v for v in await load_so_views(session, rows) if v.delay_risk]
-    return views[params.offset : params.offset + params.size], len(views)
+    if delay:
+        stmt = stmt.where(SalesOrder.delay_risk.is_(True))
+    rows, total = await paginate(session, stmt, params)
+    return await load_so_views(session, rows), total
 
 
 # ======================================================================

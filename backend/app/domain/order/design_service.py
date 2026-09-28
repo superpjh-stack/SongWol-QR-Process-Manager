@@ -207,6 +207,18 @@ async def design_file(session: AsyncSession, design_id: int, *, thumbnail: bool)
     return p
 
 
+async def list_designs(session: AsyncSession, so_key: str, line_id: int) -> list[Design]:
+    """``GET /so/{id}/lines/{line_id}/designs`` (F39, S4) — version 내림차순, is_current 포함."""
+    so = await so_service.resolve_so(session, so_key)
+    line = await so_service.get_line(session, so, line_id)
+    rows = (
+        await session.execute(
+            select(Design).where(Design.so_line_id == line.id).order_by(Design.version.desc())
+        )
+    ).scalars()
+    return list(rows.all())
+
+
 async def line_of_design(session: AsyncSession, d: Design) -> tuple[SalesOrder, SalesOrderLine]:
     line = await session.get(SalesOrderLine, d.so_line_id)
     assert line is not None

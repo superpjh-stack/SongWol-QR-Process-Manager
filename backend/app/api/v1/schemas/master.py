@@ -338,6 +338,8 @@ class User(UserSummary):
     active: bool
     has_pin: bool
     has_password: bool
+    # 0010 (S4, U1): 알림 이메일 어댑터 수신 주소 — 없으면 그 사용자는 이메일 채널을 건너뛴다.
+    email: str | None
     created_at: KstDateTime
 
 
@@ -347,6 +349,7 @@ class UserCreate(ApiModel):
     role: Role
     password: str | None = None
     pin: str | None = None
+    email: str | None = Field(default=None, max_length=100)
     issue_card: bool | None = None  # 기본: role ∈ {WORKER, MANAGER} 이면 true (shopfloor ⑥)
 
 
@@ -356,6 +359,7 @@ class UserUpdate(ApiModel):
     )
     name: str | None = Field(default=None, min_length=1, max_length=50)
     role: Role | None = None
+    email: str | None = Field(default=None, max_length=100)
 
 
 class SetPinRequest(ApiModel):
@@ -388,6 +392,13 @@ class CodeSettings(ApiModel):
     prefixes: CodePrefixes
     seq_digits: Literal[4, 5]
     checkcode_key_generation: int
+
+
+class StationOfflineSettings(ApiModel):
+    """admin #14 [S4]: ``app_setting.STATION_OFFLINE_THRESHOLD``. 분 단위."""
+
+    warn_minutes: int = Field(gt=0)
+    error_minutes: int = Field(gt=0)
 
 
 # ---- 엑셀 일괄 등록 ----

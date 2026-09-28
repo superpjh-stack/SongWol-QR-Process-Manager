@@ -48,9 +48,17 @@ STEP_PREV_OK = frozenset({"DONE", "DONE_ESTIMATED", "SKIPPED"})
 STEP_PREV_BLOCKING = frozenset({"WAITING", "STARTED"})
 # spec §4.3 2: WO 조회 — 이 상태가 아니면 거부
 WO_SCANNABLE = frozenset({"ISSUED", "IN_PROGRESS"})
-# 지시 범위 밖: S4 예정 (CANCEL·REPRINT), 업무 로직 미구현
-# (조용한 실패 금지 — 명확한 거부만 돌려준다)
-OUT_OF_SCOPE_ACTIONS = frozenset({"CANCEL", "REPRINT"})
+# 지시 범위 밖: REPRINT — WO_LABEL 재출력은 /labels/print, WORK_ORDER_PDF 재발행은 /wo/{id}/reprint
+# 가 맡는다(§15.4 D47). ``/scan action=REPRINT`` 단말 구현은 [확장](§13.4 shopfloor ⑫).
+# CANCEL(E6) 은 S4 부터 실제 경로가 있다 — 다만 관리자 웹 전용(§13.4 admin #28):
+# ``POST /wo/{id}/events/{event_uuid}/cancel``. 키오스크에는 취소 화면이 없고(파일럿),
+# ``/scan action=CANCEL`` 로 원본 이벤트를 지목하는 흐름은 여기 엔진의 일반 WO 파이프라인
+# (코드 하나 스캔 → 현재 단계 대사)과 형태가 근본적으로 달라(취소 대상은 "지금 스캔한 코드"가
+# 아니라 "과거의 특정 이벤트") 새 스키마 확장 없이는 표현할 수 없다 — 그래서 CANCEL 은
+# 이 set 에서 뺐지만(더 이상 무조건 즉시 거부하지 않는다) IN_SCOPE_ACTIONS 에도 없어 아래
+# ``decide()`` 의 방어적 분기가 여전히 ACTION_NOT_YET_SUPPORTED 로 반려한다 — 키오스크 스캔
+# 경로는 그대로 두고(계약이 [확장]으로 남긴 대로), 실제 취소는 관리자 웹 REST 경로로만 한다.
+OUT_OF_SCOPE_ACTIONS = frozenset({"REPRINT"})
 # 표준 wo_route_step 파이프라인(단일 WO·find_step/prev_step)을 타는 액션. SHIP·MAP 은 별도 분기.
 IN_SCOPE_ACTIONS = frozenset({"START", "DONE", "RECEIVE", "PACK"})
 # §5.2 5-RECEIVE·5-PACK: 이 액션은 단말 공정이 고정되어 있어야 한다 ("P20/P50 단말만")

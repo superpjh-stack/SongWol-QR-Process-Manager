@@ -13,7 +13,7 @@ from app.api.v1.schemas.common import ApiModel, CodeStr, IdRef, KstDateTime, rea
 from app.api.v1.schemas.label_job import LabelJob as LabelJob
 from app.api.v1.schemas.label_job import LabelType as LabelType
 from app.api.v1.schemas.master import RoutingStepInput, UserSummary
-from app.api.v1.schemas.material import ReceiptSummary, VendorBarcodeMap
+from app.api.v1.schemas.material import InboundLot, ReceiptSummary, VendorBarcodeMap
 from app.api.v1.schemas.scan import ScanEventSummary
 from app.api.v1.schemas.shipping import PackBoxSummary, ShipmentSummary
 
@@ -262,6 +262,29 @@ class SplitRequest(ApiModel):
 class SplitResponse(ApiModel):
     parent: WorkOrder
     child: WorkOrder
+
+
+# ---- 재작업 (E3, B4-03, api-contract §7.3) ----
+class ReworkRequest(ApiModel):
+    qty: int = Field(gt=0)
+    reason: str = Field(min_length=1, max_length=200)
+    # true = P30 부터 재삽입(재인쇄 가능) · false = P50 부터(재인쇄 불가, 바로 포장). 기본 true
+    reinsert_p30: bool = True
+
+
+class ReworkResponse(ApiModel):
+    lot: InboundLot | None
+    child: WorkOrder
+
+
+# ---- 재발행 (E5, B1-03, D47·§15.4 — WORK_ORDER_PDF 전용, printer_id 는 무시) ----
+class ReprintRequest(ApiModel):
+    printer_id: str | None = None
+
+
+# ---- 취소 (E6, B4-06, admin #28) ----
+class WoEventCancelRequest(ApiModel):
+    reason: str = Field(min_length=1, max_length=200)
 
 
 # ---- 출하 박스 상세 (ts-types §8 PackBoxDetail — WorkOrderSummary 참조 때문에 여기 둔다,

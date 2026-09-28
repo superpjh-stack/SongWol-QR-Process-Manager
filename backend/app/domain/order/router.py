@@ -141,6 +141,14 @@ async def confirm_design(
     return design_out(await design_service.confirm_design(session, key, line_id, _user(principal)))
 
 
+@router.get(
+    "/so/{key}/lines/{line_id}/designs", response_model=list[S.Design], dependencies=[_r]
+)
+async def list_designs(key: str, line_id: int, session: AsyncSession = Session) -> list[S.Design]:
+    """F39 [S4]: 버전 이력 전체 (version 내림차순, is_current 포함)."""
+    return [design_out(d) for d in await design_service.list_designs(session, key, line_id)]
+
+
 @router.get("/designs/{design_id}/file", dependencies=[_r], response_class=FileResponse)
 async def design_file(design_id: int, session: AsyncSession = Session) -> FileResponse:
     path = await design_service.design_file(session, design_id, thumbnail=False)

@@ -47,6 +47,9 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret")
 os.environ.setdefault("CHECKCODE_SECRET", "test-checkcode-secret")
 os.environ.pop("CHECKCODE_SECRET_PREV", None)
+# S4: 지연 감지 배치는 테스트에서 끈다(백그라운드 잡이 테스트마다 왕복하는 DB 엔진과 겹치면
+# flaky 해진다) — 잡 자체는 tests/test_delay_job.py 가 직접 함수를 호출해 검증한다.
+os.environ.setdefault("SCHEDULER_ENABLED", "false")
 
 
 def _asyncpg_dsn(url: str) -> str:

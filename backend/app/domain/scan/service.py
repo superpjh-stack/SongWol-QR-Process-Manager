@@ -44,6 +44,7 @@ from app.domain.master.admin_service import user_summary
 from app.domain.order import recalc
 from app.domain.order.views import load_wo_views, process_names, wo_summary
 from app.domain.scan import engine
+from app.ws import broadcast as ws_broadcast
 
 DEDUP_WINDOW_SECONDS = 60
 # CANCEL·REPRINT 는 아직 WO 컨텍스트를 만들지 않는다(S4). MAP 은 스캔한 코드 자체가 매핑 대상
@@ -1451,6 +1452,14 @@ async def handle_scan(
         data = dict(raced.response)
         data["duplicate"] = True
         return S.ScanResponse.model_validate(data)
+    # §8 표: "스캔 반영·승인·취소·발행·보류" → /ws/board 브로드캐스트. 이미 커밋된 뒤라 실패해도
+    # 이 응답에는 영향 없다(ws_broadcast 내부에서 전부 삼킨다).
+    if wo is not None:
+        if decision.kind == "PENDING":
+            pending = await _pending_scan_out(session, ev, worker)
+            await ws_broadcast.broadcast_approval_pending(pending)
+        else:
+            await ws_broadcast.broadcast_wo_updated(session, wo)
     return resp
 
 
@@ -1787,36 +1796,43 @@ async def approve(
         station_process_code=ev.process_code,
     )
     await session.commit()
+    if decision.kind == "PENDING":
+        pending = await _pending_scan_out(session, ev, worker)
+        await ws_broadcast.broadcast_approval_pending(pending)
+    else:
+        await ws_broadcast.broadcast_wo_updated(session, wo)
     return resp
 
 
 # ======================================================================
 # GET /scan/pending
 # ======================================================================
+async def _pending_scan_out(
+    session: AsyncSession, r: ScanEvent, worker: AppUser | None = None
+) -> S.PendingScan:
+    if worker is None and r.worker_id:
+        worker = await session.get(AppUser, r.worker_id)
+    wo_sum = await _scan_wo_summary(session, r.wo_id) if r.wo_id else None
+    return S.PendingScan(
+        event_uuid=r.event_uuid,
+        scanned_at=r.scanned_at,
+        station_id=r.station_id,
+        worker=user_summary(worker) if worker else None,
+        wo=wo_sum,
+        action=r.action,
+        process_code=r.process_code,
+        message=r.result_msg or "",
+        approval_token=str(r.event_uuid),
+    )
+
+
 async def list_pending(session: AsyncSession, *, station_id: str | None) -> list[S.PendingScan]:
     stmt = select(ScanEvent).where(ScanEvent.approval_status == "PENDING")
     if station_id:
         stmt = stmt.where(ScanEvent.station_id == station_id)
     stmt = stmt.order_by(ScanEvent.received_at.desc())
     rows = (await session.execute(stmt)).scalars().all()
-    out: list[S.PendingScan] = []
-    for r in rows:
-        worker = await session.get(AppUser, r.worker_id) if r.worker_id else None
-        wo_sum = await _scan_wo_summary(session, r.wo_id) if r.wo_id else None
-        out.append(
-            S.PendingScan(
-                event_uuid=r.event_uuid,
-                scanned_at=r.scanned_at,
-                station_id=r.station_id,
-                worker=user_summary(worker) if worker else None,
-                wo=wo_sum,
-                action=r.action,
-                process_code=r.process_code,
-                message=r.result_msg or "",
-                approval_token=str(r.event_uuid),
-            )
-        )
-    return out
+    return [await _pending_scan_out(session, r) for r in rows]
 
 
 # ======================================================================

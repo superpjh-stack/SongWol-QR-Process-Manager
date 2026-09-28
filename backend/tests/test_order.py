@@ -466,3 +466,67 @@ async def test_patch_read_only_fields(client: AsyncClient, admin_headers: dict[s
             f"{API}/printers/{pid}", headers=admin_headers, json={"id": "OTHER"}
         )
         assert res.status_code == 422 and res.json()["code"] == "READ_ONLY_FIELD"
+
+
+# ======================================================================
+# S4: SO PATCH lines — 도안 있는 라인 삭제 409 (D37) · 도안 버전 이력 (F39)
+# ======================================================================
+@pytest.mark.asyncio
+async def test_so_patch_delete_line_with_design_is_409(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    m = await setup_master(client, admin_headers, routings=("SCREEN",))
+    so = await make_so(
+        client,
+        admin_headers,
+        m,
+        lines=[
+            {"item_id": m["item"]["id"], "print_method": "SCREEN", "qty": 100},
+            {"item_id": m["item"]["id"], "print_method": "SCREEN", "qty": 50},
+        ],
+    )
+    l1, l2 = so["lines"]
+    await upload_design(client, admin_headers, so["id"], l1["id"])
+
+    # WO 없이도 "도안이 등록되어 있으면" 라인 삭제는 409 (D37)
+    res = await client.patch(
+        f"{API}/so/{so['id']}",
+        headers=admin_headers,
+        json={
+            "lines": [
+                {"id": l2["id"], "item_id": m["item"]["id"], "print_method": "SCREEN", "qty": 50}
+            ]
+        },
+    )
+    assert res.status_code == 409 and res.json()["code"] == "STATE_CONFLICT"
+
+    # 도안 없는 라인(l2) 삭제는 그대로 허용
+    res2 = await client.patch(
+        f"{API}/so/{so['id']}",
+        headers=admin_headers,
+        json={
+            "lines": [
+                {"id": l1["id"], "item_id": m["item"]["id"], "print_method": "SCREEN", "qty": 100}
+            ]
+        },
+    )
+    assert res2.status_code == 200, res2.text
+    assert [ln["id"] for ln in res2.json()["lines"]] == [l1["id"]]
+
+
+@pytest.mark.asyncio
+async def test_design_version_history_endpoint(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    m = await setup_master(client, admin_headers, routings=("SCREEN",))
+    so = await make_so(client, admin_headers, m)
+    line_id = so["lines"][0]["id"]
+    await upload_design(client, admin_headers, so["id"], line_id)
+    await upload_design(client, admin_headers, so["id"], line_id)
+
+    res = await client.get(f"{API}/so/{so['id']}/lines/{line_id}/designs", headers=admin_headers)
+    assert res.status_code == 200, res.text
+    versions = [d["version"] for d in res.json()]
+    assert versions == [2, 1]  # 내림차순
+    assert res.json()[0]["is_current"] is True
+    assert res.json()[1]["is_current"] is False

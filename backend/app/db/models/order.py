@@ -82,6 +82,9 @@ class SalesOrder(TimestampMixin, Base):
     cancelled_by: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT")
     )
+    # 0010 (S4, RISK-S1-1): 지연 감지 잡(§6.5)이 10분마다 갱신하는 목록 필터용 캐시.
+    # 상세 조회는 여전히 domain.order.recalc.wo_delay_risk 로 실시간 계산한다.
+    delay_risk: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
     lines: Mapped[list["SalesOrderLine"]] = relationship(
         back_populates="sales_order", order_by="SalesOrderLine.line_no"
@@ -206,6 +209,8 @@ class WorkOrder(TimestampMixin, Base):
     cancelled_by: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT")
     )
+    # 0010 (S4, RISK-S1-1): 지연 감지 잡(§6.5)이 10분마다 갱신하는 목록 필터용 캐시.
+    delay_risk: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
     route_steps: Mapped[list["WoRouteStep"]] = relationship(
         back_populates="work_order", order_by="WoRouteStep.seq"

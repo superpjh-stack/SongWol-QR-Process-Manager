@@ -280,6 +280,9 @@ class AppUser(TimestampMixin, Base):
         SmallInteger, nullable=False, server_default=text("0")
     )
     login_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 0010 (S4, U1): 알림(DELAY 등) 이메일 어댑터 수신 주소. 없으면 그 사용자는 이메일 채널만
+    # 건너뛴다(조용한 실패 아님 — notification.sent_at 이 NULL 로 남아 재시도 대상이 된다).
+    email: Mapped[str | None] = mapped_column(String(100))
 
 
 class Printer(Base):

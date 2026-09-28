@@ -1,19 +1,22 @@
-"""작업지시 라우터 (api-contract §7.3). ``/wo`` 목록·상세·이벤트·hold·resume·cancel·close·split.
-
-rework · reprint · search 는 S4/개발B 몫이라 여기 없다.
+"""작업지시 라우터 (api-contract §7.3). ``/wo`` 목록·상세·이벤트·hold·resume·cancel·close·split·
+rework·reprint·search·이벤트 취소(E6).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import uuid
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import permissions as P
 from app.api.deps import Principal, Session, require_roles
 from app.api.v1.schemas import order as S
 from app.api.v1.schemas.common import Page
+from app.api.v1.schemas.label_job import LabelJob
 from app.api.v1.schemas.scan import ScanEventSummary
 from app.domain.common.listing import PageDep, PageParams
+from app.domain.label import service as label_service
 from app.domain.order import wo_service
 from app.domain.order.views import as_page, event_outs, load_wo_views, wo_detail, wo_out, wo_summary
 
@@ -23,6 +26,10 @@ _r = Depends(require_roles(*P.ORDER_READ, station=True))
 _m = Depends(require_roles(*P.WO_MANAGE))
 # §13.4 shopfloor ⑱ [S3]: STATION 도 허용(본문 approver_card+pin 은 서비스가 검사한다)
 _split_gate = Depends(require_roles(*P.WO_MANAGE, station=True))
+# §13.8: reprint 는 ORDER_WRITE(ADMIN/MANAGER/SALES) + STATION
+_reprint_gate = Depends(require_roles(*P.ORDER_WRITE, station=True))
+# admin #28: E6 취소는 JWT MANAGER/ADMIN 전용(STATION 없음 — 키오스크에 취소 화면 없음)
+_cancel_event_gate = Depends(require_roles("MANAGER", "ADMIN"))
 
 
 @router.get("", response_model=Page[S.WorkOrderSummary], dependencies=[_r])
@@ -47,6 +54,18 @@ async def list_wo(
         sort=sort,
     )
     return as_page([wo_summary(v) for v in views], total, params.page, params.size)
+
+
+@router.get(
+    "/search", response_model=list[S.WorkOrderSummary], dependencies=[_r]
+)
+async def search_wo(
+    q: str = Query(default=""), session: AsyncSession = Session
+) -> list[S.WorkOrderSummary]:
+    """``GET /wo/search?q=`` (KSK-70 라벨 재발행 검색, §7.3). ``/{key}`` 보다 먼저 등록해야
+    ``search`` 가 WO 코드로 오인되지 않는다."""
+    views = await wo_service.search_work_orders(session, q)
+    return [wo_summary(v) for v in views]
 
 
 @router.get("/{key}", response_model=S.WorkOrderDetail, dependencies=[_r])
@@ -104,3 +123,43 @@ async def split_wo(
 ) -> S.SplitResponse:
     parent, child = await wo_service.split_wo(session, key, body, principal)
     return S.SplitResponse(parent=await _out(session, parent), child=await _out(session, child))
+
+
+@router.post("/{key}/rework", response_model=S.ReworkResponse)
+async def rework_wo(
+    key: str, body: S.ReworkRequest, principal: Principal = _m, session: AsyncSession = Session
+) -> S.ReworkResponse:
+    assert principal.user is not None  # _m 은 JWT 전용
+    _wo, child = await wo_service.rework_wo(session, key, body, principal.user)
+    return S.ReworkResponse(lot=None, child=await _out(session, child))
+
+
+@router.post("/{key}/reprint", response_model=LabelJob)
+async def reprint_wo(
+    key: str,
+    body: S.ReprintRequest | None = None,
+    principal: Principal = _reprint_gate,
+    session: AsyncSession = Session,
+) -> LabelJob:
+    """WORK_ORDER_PDF 재발행 전용(D47·§15.4·§15.2). ``body.printer_id`` 는 무시한다."""
+    wo = await wo_service.resolve_wo(session, key)
+    return await label_service.reprint_work_order_pdf(
+        session,
+        wo,
+        issued_by=principal.user_id,
+        station_id=principal.station.id if principal.station else None,
+    )
+
+
+@router.post("/{key}/events/{event_uuid}/cancel", response_model=S.WorkOrder)
+async def cancel_wo_event(
+    key: str,
+    event_uuid: uuid.UUID,
+    body: S.WoEventCancelRequest,
+    principal: Principal = _cancel_event_gate,
+    session: AsyncSession = Session,
+) -> S.WorkOrder:
+    """E6 (admin #28): 관리자 웹 전용, JWT 가 곧 승인."""
+    assert principal.user is not None
+    wo = await wo_service.cancel_wo_event(session, key, event_uuid, body.reason, principal.user)
+    return await _out(session, wo)

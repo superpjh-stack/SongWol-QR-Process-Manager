@@ -537,6 +537,30 @@ async def print_label(
     )
 
 
+async def reprint_work_order_pdf(
+    session: AsyncSession, wo: WorkOrder, *, issued_by: int | None, station_id: str | None
+) -> LabelJob:
+    """``POST /wo/{id}/reprint`` (D47 · §15.4 · §15.2 "S4-7") — **WORK_ORDER_PDF 전용**.
+    ``printer_id`` 는 무시한다(PDF 는 프린터로 보내지 않는다, GET 으로 다시 렌더). 차수만
+    올린다(``record_issue``, 기존 발행 훅과 같은 함수 재사용). WO_LABEL 재출력은 이 경로가
+    아니라 ``/labels/print`` 다(§15.4 표, 여기서 중복하지 않는다).
+    """
+    issue = await record_issue(
+        session, "WO", wo.code, "WORK_ORDER_PDF", issued_by, station_id
+    )
+    await session.commit()
+    return LabelJob(
+        issue_no=issue.issue_no,
+        label_type="WORK_ORDER_PDF",
+        printer_id=None,
+        copies=1,
+        sent_at=None,
+        pdf_url=f"/api/v1/labels/work-order/{wo.code}.pdf",
+        zpl_sent=False,
+        error=None,
+    )
+
+
 # ======================================================================
 # 라벨 양식 (ADM-09 탭 2)
 # ======================================================================

@@ -59,6 +59,23 @@ class Settings(BaseSettings):
     printer_host: str = ""
     printer_port: int = 9100
 
+    # 알림 이메일 어댑터 (S4, U1 — progress.md "이메일 어댑터로 임시"). 비어 있으면 발송을 보류
+    # 하고 notification.sent_at 을 NULL 로 남긴다(다음 배치가 재시도, 조용한 성공 처리 금지).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "songwol-qr@localhost"
+    smtp_use_tls: bool = True
+
+    # 지연 감지 배치 (§6.5) 주기. 기본 10분
+    delay_job_interval_minutes: int = 10
+    # WS 스냅샷 재전송 주기 — app_setting BOARD_SNAPSHOT_INTERVAL_SEC 이 없을 때 기본값(§13.5 ㉓)
+    board_snapshot_interval_sec: int = 300
+    # 스케줄러(지연 감지 잡)를 앱 기동 시 실제로 돌릴지. 테스트에서는 끈다(매 테스트 DB 를
+    # 새로 왕복시키는데 백그라운드 잡이 겹치면 flaky 해진다) — conftest 가 env 로 끈다.
+    scheduler_enabled: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

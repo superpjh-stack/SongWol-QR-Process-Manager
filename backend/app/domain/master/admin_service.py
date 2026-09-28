@@ -107,6 +107,26 @@ async def put_code_settings(
     return await get_code_settings(session)
 
 
+async def get_station_offline_settings(session: AsyncSession) -> S.StationOfflineSettings:
+    """admin #14 [S4]: ``GET /settings/station-offline``."""
+    value = await get_setting(session, OFFLINE_THRESHOLD_KEY)
+    return S.StationOfflineSettings.model_validate(value)
+
+
+async def put_station_offline_settings(
+    session: AsyncSession, body: S.StationOfflineSettings, user_id: int
+) -> S.StationOfflineSettings:
+    row = await session.get(AppSetting, OFFLINE_THRESHOLD_KEY)
+    if row is None:
+        row = AppSetting(key=OFFLINE_THRESHOLD_KEY, value=body.model_dump())
+        session.add(row)
+    else:
+        row.value = body.model_dump()
+    row.updated_by = user_id
+    await session.commit()
+    return await get_station_offline_settings(session)
+
+
 # ======================================================================
 # 단말
 # ======================================================================
@@ -164,6 +184,20 @@ async def list_stations(
     rows, total = await paginate(session, stmt, params)
     threshold = await get_setting(session, OFFLINE_THRESHOLD_KEY)
     return [await station_out(session, r, threshold) for r in rows], total
+
+
+async def list_station_workers(session: AsyncSession) -> list[AppUser]:
+    """``GET /stations/{id}/workers`` [S4] (§13.2 shopfloor ④): 오프라인 로그인 캐시용 —
+    활성 WORKER/MANAGER/ADMIN 의 card_code·name·role (PIN 없음, ``user_summary`` 가 이미
+    비밀 필드를 빼고 내려준다)."""
+    rows = (
+        await session.execute(
+            select(AppUser).where(
+                AppUser.role.in_(STATION_LOGIN_ROLES), AppUser.active.is_(True)
+            )
+        )
+    ).scalars()
+    return list(rows.all())
 
 
 async def get_station(session: AsyncSession, station_id: str) -> Station:
@@ -271,6 +305,7 @@ def user_out(u: AppUser) -> S.User:
         active=u.active,
         has_pin=u.pin_hash is not None,
         has_password=u.password_hash is not None,
+        email=u.email,
         created_at=u.created_at,
     )
 
@@ -380,6 +415,7 @@ async def create_user(session: AsyncSession, body: S.UserCreate) -> AppUser:
         login_id=body.login_id,
         name=body.name,
         role=body.role,
+        email=body.email,
         password_hash=hash_secret(body.password) if body.password else None,
         pin_hash=hash_secret(body.pin) if body.pin else None,
         password_changed_at=datetime.now(UTC) if body.password else None,
