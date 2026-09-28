@@ -35,6 +35,7 @@ export type {
   ReceiptStatus,
   MigrationStatus,
   MigrationSource,
+  StockSource,
   Role,
   SoStatus,
   ScanResult,
@@ -47,7 +48,6 @@ import type {
   ApprovalStatus,
   Inspection,
   LotStatus,
-  MigrationSource,
   MigrationStatus,
   ReceiptStatus,
   Role,
@@ -55,6 +55,7 @@ import type {
   ShipmentStatus,
   SoStatus,
   StepStatus,
+  StockSource,
   WoStatus,
 } from '../types'
 import { ApprovalStatusLabel, InspectionLabel, LotStatusLabel, MigrationSourceLabel, MigrationStatusLabel, RoleLabel, ScanResultLabel, ShipmentStatusLabel, SoStatusLabel } from '../labels'
@@ -135,10 +136,11 @@ export const MIGRATION_STATUS: Record<MigrationStatus, StatusMeta> = {
   ROLLED_BACK: { label: MigrationStatusLabel.ROLLED_BACK, tone: 'skipped', Icon: IconRefresh },
 }
 
-/** 이관 출처 (screens-admin ADM-31) */
-export const MIGRATION_SOURCE: Record<MigrationSource, StatusMeta> = {
+/** 이관·재고 출처 (screens-admin ADM-31·ADM-21). ADM-21 stock_txn.source 는 NEW 도 쓴다 (StockSource 가 상위집합) */
+export const MIGRATION_SOURCE: Record<StockSource, StatusMeta> = {
   IMS_XLS: { label: MigrationSourceLabel.IMS_XLS, tone: 'progress', Icon: IconInbox },
   COUNT: { label: MigrationSourceLabel.COUNT, tone: 'partial', Icon: IconTag },
+  NEW: { label: MigrationSourceLabel.NEW, tone: 'done', Icon: IconCheck },
 }
 
 /** 역할 (spec §3). 색은 구분용 기본값 */

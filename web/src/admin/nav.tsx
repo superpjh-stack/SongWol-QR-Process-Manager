@@ -23,6 +23,7 @@ export const NAV_TREE: Group[] = [
       { to: '/admin/material/stock', label: '재고 현황', screen: 'material', end: true },
       { to: '/admin/material/stock/adjust', label: '재고 조정', screen: 'material.adjust' },
       { to: '/admin/material/txns', label: '입출고 이력', screen: 'material' },
+      { to: '/admin/material/vendor-barcodes', label: '업체 바코드 매핑', screen: 'material' },
     ],
   },
   {

@@ -10,7 +10,6 @@ import type {
   Inspection,
   LabelType,
   LotStatus,
-  MigrationSource,
   MigrationStatus,
   PrintMethodCode,
   RequiredInput,
@@ -20,6 +19,8 @@ import type {
   ShipmentStatus,
   SoStatus,
   StationType,
+  StockSource,
+  StockTxnType,
   TargetType,
   VarianceReasonCode,
 } from './types'
@@ -67,10 +68,23 @@ export const ImportEntityLabel: Record<ImportEntity, string> = {
   stock: '기초재고',
 }
 
-/** screens-admin ADM-31 「IMS_XLS「IMS 엑셀」/ COUNT「실사」」 */
-export const MigrationSourceLabel: Record<MigrationSource, string> = {
+/**
+ * screens-admin ADM-31 「IMS_XLS「IMS 엑셀」/ COUNT「실사」」 · ADM-21 stock_txn.source 는 NEW「신규」도 더한다
+ * (`StockSource` 가 `MigrationSource` 의 상위집합이라 이 표 하나로 두 화면을 겸한다).
+ */
+export const MigrationSourceLabel: Record<StockSource, string> = {
   IMS_XLS: 'IMS 엑셀',
   COUNT: '실사',
+  NEW: '신규',
+}
+
+/** screens-admin ADM-21 「MIGRATE/RECEIVE/SHIP/ADJUST/REWORK 한글」 */
+export const StockTxnTypeLabel: Record<StockTxnType, string> = {
+  MIGRATE: '이관',
+  RECEIVE: '입고',
+  SHIP: '발송',
+  ADJUST: '조정',
+  REWORK: '재작업',
 }
 
 /** ※ 기본값 — spec 에 문구 없음 (db-schema migration_batch.status) */

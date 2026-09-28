@@ -46,8 +46,8 @@ export const scanApi = {
     api.post<ScanResponse>(`${P}/scan/${encodeURIComponent(eventUuid)}/approve`, body, {
       headers: stationHeaders(approvalToken ? { 'X-Approval-Token': approvalToken } : undefined),
     }),
-  /** GET /api/v1/scan/pending?station_id= — KSK-61 */
-  pending: (stationId: string) => api.get<PendingScan[]>(`${P}/scan/pending${qs({ station_id: stationId })}`, { headers: stationHeaders() }),
+  /** GET /api/v1/scan/pending?station_id= — KSK-61 (단말, station_id 필수) · ADM-17 (관리자 JWT, station_id 생략 시 전체) */
+  pending: (stationId?: string) => api.get<PendingScan[]>(`${P}/scan/pending${qs({ station_id: stationId })}`, { headers: stationHeaders() }),
 }
 
 /** 단말 자기서비스 (부팅·대기열·설비) — 전부 STATION 키 */

@@ -49,4 +49,6 @@ export const ROLES: readonly Role[] = ['ADMIN', 'MANAGER', 'SALES', 'WORKER', 'V
 export const MIGRATION_STATUSES: readonly MigrationStatus[] = ['PREVIEW', 'LOADED', 'FAILED', 'ROLLED_BACK']
 export const MIGRATION_SOURCES: readonly MigrationSource[] = ['IMS_XLS', 'COUNT']
 export const IMPORT_ENTITIES: readonly ImportEntity[] = ['customer', 'item', 'stock']
+export const STOCK_TXN_TYPES: readonly StockTxnType[] = ['MIGRATE', 'RECEIVE', 'SHIP', 'ADJUST', 'REWORK']
+export const STOCK_SOURCES: readonly StockSource[] = ['IMS_XLS', 'NEW', 'COUNT']
 export const REQUIRED_INPUTS: readonly RequiredInput[] = ['qty', 'box_count', 'inspection', 'equipment', 'qty_good', 'qty_bad', 'qty_box', 'tracking_no']

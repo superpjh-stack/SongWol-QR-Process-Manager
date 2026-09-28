@@ -25,6 +25,15 @@ import { SalesOrderFormPage } from './pages/so/SalesOrderFormPage'
 import { SalesOrderDetailPage } from './pages/so/SalesOrderDetailPage'
 import { WorkOrdersPage } from './pages/wo/WorkOrdersPage'
 import { WorkOrderDetailPage } from './pages/wo/WorkOrderDetailPage'
+import { PendingApprovalsPage } from './pages/wo/PendingApprovalsPage'
+import { ReceiptsPage } from './pages/material/ReceiptsPage'
+import { StockPage } from './pages/material/StockPage'
+import { StockAdjustPage } from './pages/material/StockAdjustPage'
+import { StockTxnsPage } from './pages/material/StockTxnsPage'
+import { VendorBarcodesPage } from './pages/material/VendorBarcodesPage'
+import { ShippingPage } from './pages/shipping/ShippingPage'
+import { ShipmentFormPage } from './pages/shipping/ShipmentFormPage'
+import { DailyReportPage } from './pages/shipping/DailyReportPage'
 
 const guard = (screen: ScreenKey, el: React.ReactNode) => <RequireRole screen={screen}>{el}</RequireRole>
 const later = (screen: ScreenKey, id: string, title: string, sprint: string) => guard(screen, <NotReady id={id} title={title} sprint={sprint} />)
@@ -41,15 +50,16 @@ export const adminRoute: RouteObject = {
     { path: 'so/:code/edit', element: guard('so', <SalesOrderFormPage />) },
     { path: 'so/:code', element: guard('so', <SalesOrderDetailPage />) },
     { path: 'wo', element: guard('wo', <WorkOrdersPage />) },
-    { path: 'wo/pending', element: later('wo.pending', 'ADM-17', '예외 승인 대기', '[S2-3]') },
+    { path: 'wo/pending', element: guard('wo.pending', <PendingApprovalsPage />) },
     { path: 'wo/:code', element: guard('wo', <WorkOrderDetailPage />) },
-    { path: 'material/receipts', element: later('material', 'ADM-18', '입고 목록', '[S3-1]') },
-    { path: 'material/stock', element: later('material', 'ADM-19', '재고 현황', '[S3-5]') },
-    { path: 'material/stock/adjust', element: later('material.adjust', 'ADM-20', '재고 조정', '[S3-5]') },
-    { path: 'material/txns', element: later('material', 'ADM-21', '입출고 이력', '[S3-5]') },
-    { path: 'shipping', element: later('shipping', 'ADM-22', '포장·출하 목록', '[S3-9]') },
-    { path: 'shipping/new', element: later('shipping.new', 'ADM-23', '발송 등록', '[S3-7]') },
-    { path: 'shipping/daily', element: later('shipping', 'ADM-24', '출하 일보', '[S3-9]') },
+    { path: 'material/receipts', element: guard('material', <ReceiptsPage />) },
+    { path: 'material/stock', element: guard('material', <StockPage />) },
+    { path: 'material/stock/adjust', element: guard('material.adjust', <StockAdjustPage />) },
+    { path: 'material/txns', element: guard('material', <StockTxnsPage />) },
+    { path: 'material/vendor-barcodes', element: guard('material', <VendorBarcodesPage />) },
+    { path: 'shipping', element: guard('shipping', <ShippingPage />) },
+    { path: 'shipping/new', element: guard('shipping.new', <ShipmentFormPage />) },
+    { path: 'shipping/daily', element: guard('shipping', <DailyReportPage />) },
     { path: 'reports/output', element: later('reports', 'ADM-25', '실적 집계', '[S4-4]') },
     { path: 'reports/lead-time', element: later('reports', 'ADM-26', '리드타임 분석', '[S7-4] [확장]') },
     { path: 'trace', element: later('trace', 'ADM-27', 'LOT 역추적', '[S7-3] [확장]') },

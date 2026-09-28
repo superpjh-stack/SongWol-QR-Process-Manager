@@ -10,9 +10,11 @@ export type ReasonDialogProps = Omit<ConfirmDialogProps, 'onConfirm' | 'children
   children?: ReactNode
   reasonLabel?: string
   presets?: readonly string[]
+  /** 기본 REASON_MAX(200, hold_reason 기준). quarantine_memo(≤300) 등 다른 길이 제약이면 넘긴다 */
+  maxLength?: number
 }
 
-export function ReasonDialog({ open, onConfirm, children, reasonLabel = '사유', presets, ...rest }: ReasonDialogProps) {
+export function ReasonDialog({ open, onConfirm, children, reasonLabel = '사유', presets, maxLength = REASON_MAX, ...rest }: ReasonDialogProps) {
   const [reason, setReason] = useState('')
   const [touched, setTouched] = useState(false)
   useEffect(() => {
@@ -22,14 +24,14 @@ export function ReasonDialog({ open, onConfirm, children, reasonLabel = '사유'
     }
   }, [open])
   const trimmed = reason.trim()
-  const err = touched && trimmed.length === 0 ? `${reasonLabel}을(를) 입력하세요` : trimmed.length > REASON_MAX ? `${REASON_MAX}자 이하로 입력하세요` : undefined
+  const err = touched && trimmed.length === 0 ? `${reasonLabel}을(를) 입력하세요` : trimmed.length > maxLength ? `${maxLength}자 이하로 입력하세요` : undefined
   return (
     <ConfirmDialog
       open={open}
       {...rest}
       onConfirm={() => {
         setTouched(true)
-        if (trimmed.length === 0 || trimmed.length > REASON_MAX) return
+        if (trimmed.length === 0 || trimmed.length > maxLength) return
         onConfirm(trimmed)
       }}
     >
@@ -44,7 +46,7 @@ export function ReasonDialog({ open, onConfirm, children, reasonLabel = '사유'
             ))}
           </div>
         ) : null}
-        <Textarea label={reasonLabel} required maxLength={REASON_MAX} value={reason} error={err} onBlur={() => setTouched(true)} onChange={(e) => setReason(e.target.value)} hint={`${trimmed.length}/${REASON_MAX}`} />
+        <Textarea label={reasonLabel} required maxLength={maxLength} value={reason} error={err} onBlur={() => setTouched(true)} onChange={(e) => setReason(e.target.value)} hint={`${trimmed.length}/${maxLength}`} />
       </div>
     </ConfirmDialog>
   )

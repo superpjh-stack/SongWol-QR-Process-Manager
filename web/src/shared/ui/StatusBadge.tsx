@@ -22,7 +22,6 @@ import {
   type ApprovalStatus,
   type Inspection,
   type LotStatus,
-  type MigrationSource,
   type MigrationStatus,
   type ReceiptStatus,
   type Role,
@@ -31,6 +30,7 @@ import {
   type SoStatus,
   type StatusMeta,
   type StepStatus,
+  type StockSource,
   type WoStatus,
 } from './status'
 
@@ -42,7 +42,7 @@ export type StatusBadgeProps = (
   | { kind: 'receipt'; status: ReceiptStatus }
   | { kind: 'active'; status: boolean }
   | { kind: 'migration'; status: MigrationStatus }
-  | { kind: 'source'; status: MigrationSource }
+  | { kind: 'source'; status: StockSource }
   | { kind: 'role'; status: Role }
   | { kind: 'so'; status: SoStatus }
   | { kind: 'scanResult'; status: ScanResult }
