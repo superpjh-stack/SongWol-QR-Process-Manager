@@ -8,9 +8,9 @@
  * 기존처럼 오버레이(배경 어둡게)로 뜬다. 마지막 상태는 로컬에 저장해 새로고침해도 유지한다.
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { cn } from '../cn'
-import { IconMenu } from '../icons'
+import { IconChevronRight, IconMenu } from '../icons'
 
 export type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean }
 export type NavGroup = { label?: string; items: NavItem[] }
@@ -42,10 +42,39 @@ function saveSidebarOpen(open: boolean): void {
   }
 }
 
+/** 현재 경로가 속한 그룹 라벨(있으면) — 처음 열릴 때 그 그룹만 펼쳐 보여준다. */
+function activeGroupLabel(nav: NavGroup[], pathname: string): string | null {
+  for (const g of nav) {
+    if (!g.label) continue
+    if (g.items.some((it) => pathname === it.to || pathname.startsWith(it.to + '/'))) return g.label
+  }
+  return null
+}
+
 export function AppLayout({ brand = '송월 QR 공정관리', nav, user, children }: AppLayoutProps) {
   const [open, setOpen] = useState(loadSidebarOpen)
+  const location = useLocation()
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
+    const active = activeGroupLabel(nav, location.pathname)
+    return new Set(active ? [active] : [])
+  })
 
   useEffect(() => saveSidebarOpen(open), [open])
+
+  // 다른 화면(직접 링크·뒤로가기 등)으로 이동해도 그 화면이 속한 그룹은 자동으로 펼쳐 둔다.
+  // 이미 펼쳐진 다른 그룹을 접지는 않는다 — 사용자가 직접 접은 것만 접힌 채로 둔다.
+  useEffect(() => {
+    const active = activeGroupLabel(nav, location.pathname)
+    if (active) setOpenGroups((prev) => (prev.has(active) ? prev : new Set(prev).add(active)))
+  }, [location.pathname])
+
+  const toggleGroup = (label: string) =>
+    setOpenGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(label)) next.delete(label)
+      else next.add(label)
+      return next
+    })
 
   return (
     <div className="density-admin flex min-h-dvh bg-surface-2">
@@ -69,28 +98,67 @@ export function AppLayout({ brand = '송월 QR 공정관리', nav, user, childre
           </button>
         </div>
         <nav className="flex-1 overflow-y-auto px-2 py-2">
-          {nav.map((g, gi) => (
-            <div key={gi} className="mb-3">
-              {g.label ? <div className="px-2 pb-1 text-ad-xs font-semibold text-white/50 uppercase">{g.label}</div> : null}
-              {g.items.map((it) => (
-                <NavLink
-                  key={it.to}
-                  to={it.to}
-                  {...(it.end !== undefined ? { end: it.end } : {})}
-                  onClick={() => setOpen(window.innerWidth >= 1024 ? open : false)}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex h-9 items-center gap-2 rounded-ad px-2 text-white/80 hover:bg-white/10 hover:text-white',
-                      isActive && 'bg-white/15 font-semibold text-white',
-                    )
-                  }
+          {nav.map((g, gi) => {
+            // 라벨 없는 그룹(대시보드 등 단일 항목)은 아코디언 없이 평범한 링크로 보여준다.
+            if (!g.label) {
+              return (
+                <div key={gi} className="mb-1">
+                  {g.items.map((it) => (
+                    <NavLink
+                      key={it.to}
+                      to={it.to}
+                      {...(it.end !== undefined ? { end: it.end } : {})}
+                      onClick={() => setOpen(window.innerWidth >= 1024 ? open : false)}
+                      className={({ isActive }) =>
+                        cn(
+                          'flex h-9 items-center gap-2 rounded-ad px-2 text-white/80 hover:bg-white/10 hover:text-white',
+                          isActive && 'bg-white/15 font-semibold text-white',
+                        )
+                      }
+                    >
+                      {it.icon}
+                      <span className="truncate">{it.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              )
+            }
+            const isOpen = openGroups.has(g.label)
+            return (
+              <div key={gi} className="mb-1">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(g.label!)}
+                  aria-expanded={isOpen}
+                  className="flex h-8 w-full items-center justify-between rounded-ad px-2 text-ad-xs font-semibold text-white/50 uppercase hover:text-white/80"
                 >
-                  {it.icon}
-                  <span className="truncate">{it.label}</span>
-                </NavLink>
-              ))}
-            </div>
-          ))}
+                  <span>{g.label}</span>
+                  <IconChevronRight size={13} className={cn('transition-transform duration-150', isOpen && 'rotate-90')} />
+                </button>
+                <div className={cn('grid overflow-hidden transition-[grid-template-rows] duration-150 ease-in-out', isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}>
+                  <div className="min-h-0">
+                    {g.items.map((it) => (
+                      <NavLink
+                        key={it.to}
+                        to={it.to}
+                        {...(it.end !== undefined ? { end: it.end } : {})}
+                        onClick={() => setOpen(window.innerWidth >= 1024 ? open : false)}
+                        className={({ isActive }) =>
+                          cn(
+                            'flex h-9 items-center gap-2 rounded-ad px-2 text-white/80 hover:bg-white/10 hover:text-white',
+                            isActive && 'bg-white/15 font-semibold text-white',
+                          )
+                        }
+                      >
+                        {it.icon}
+                        <span className="truncate">{it.label}</span>
+                      </NavLink>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </nav>
         {user ? <div className="border-t border-white/10 px-4 py-3">{user}</div> : null}
       </aside>

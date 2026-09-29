@@ -7,11 +7,12 @@ type Entry = { to: string; label: string; screen: ScreenKey; end?: boolean }
 type Group = { label: string; items: Entry[] }
 
 export const NAV_TREE: Group[] = [
-  { label: '대시보드', items: [{ to: '/admin', label: '대시보드', screen: 'dashboard', end: true }] },
-  { label: '수주', items: [{ to: '/admin/so', label: '수주 목록', screen: 'so' }] },
+  // 라벨 없음 = 아코디언 없이 항상 보이는 단일 링크(AppLayout 의 규약).
+  { label: '', items: [{ to: '/admin', label: '대시보드', screen: 'dashboard', end: true }] },
   {
-    label: '작업지시',
+    label: '수주·작업지시',
     items: [
+      { to: '/admin/so', label: '수주 목록', screen: 'so' },
       { to: '/admin/wo', label: '작업지시 목록', screen: 'wo', end: true },
       { to: '/admin/wo/pending', label: '예외 승인', screen: 'wo.pending' },
     ],
