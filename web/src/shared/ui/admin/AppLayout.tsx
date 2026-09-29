@@ -13,7 +13,11 @@ import { cn } from '../cn'
 import { IconChevronRight, IconMenu } from '../icons'
 
 export type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean }
-export type NavGroup = { label?: string; items: NavItem[] }
+export type NavSubGroup = { label: string; items: NavItem[] }
+export type NavNode = NavItem | NavSubGroup
+export type NavGroup = { label?: string; items: NavNode[] }
+
+const isSubGroup = (node: NavNode): node is NavSubGroup => !('to' in node)
 
 export type AppLayoutProps = {
   brand?: ReactNode
@@ -42,30 +46,44 @@ function saveSidebarOpen(open: boolean): void {
   }
 }
 
-/** 현재 경로가 속한 그룹 라벨(있으면) — 처음 열릴 때 그 그룹만 펼쳐 보여준다. */
-function activeGroupLabel(nav: NavGroup[], pathname: string): string | null {
+const matches = (it: NavItem, pathname: string) => pathname === it.to || pathname.startsWith(it.to + '/')
+/** 하위 그룹 키 — 상위 그룹 라벨과 합쳐서 만든다(같은 이름의 하위 그룹이 다른 그룹에 있어도 안 겹치게). */
+const subKey = (groupLabel: string, subLabel: string) => `${groupLabel}>${subLabel}`
+
+/** 현재 경로가 속한 (상위 그룹 라벨, 하위 그룹 키) — 처음 열릴 때 그것만 펼쳐 보여준다. */
+function activeOpenKeys(nav: NavGroup[], pathname: string): string[] {
   for (const g of nav) {
     if (!g.label) continue
-    if (g.items.some((it) => pathname === it.to || pathname.startsWith(it.to + '/'))) return g.label
+    for (const node of g.items) {
+      if (isSubGroup(node)) {
+        if (node.items.some((it) => matches(it, pathname))) return [g.label, subKey(g.label, node.label)]
+      } else if (matches(node, pathname)) {
+        return [g.label]
+      }
+    }
   }
-  return null
+  return []
 }
 
 export function AppLayout({ brand = '송월 QR 공정관리', nav, user, children }: AppLayoutProps) {
   const [open, setOpen] = useState(loadSidebarOpen)
   const location = useLocation()
-  const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
-    const active = activeGroupLabel(nav, location.pathname)
-    return new Set(active ? [active] : [])
-  })
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set(activeOpenKeys(nav, location.pathname)))
 
   useEffect(() => saveSidebarOpen(open), [open])
 
-  // 다른 화면(직접 링크·뒤로가기 등)으로 이동해도 그 화면이 속한 그룹은 자동으로 펼쳐 둔다.
+  // 다른 화면(직접 링크·뒤로가기 등)으로 이동해도 그 화면이 속한 그룹·하위그룹은 자동으로 펼쳐 둔다.
   // 이미 펼쳐진 다른 그룹을 접지는 않는다 — 사용자가 직접 접은 것만 접힌 채로 둔다.
   useEffect(() => {
-    const active = activeGroupLabel(nav, location.pathname)
-    if (active) setOpenGroups((prev) => (prev.has(active) ? prev : new Set(prev).add(active)))
+    const keys = activeOpenKeys(nav, location.pathname)
+    if (keys.length === 0) return
+    setOpenGroups((prev) => {
+      const missing = keys.filter((k) => !prev.has(k))
+      if (missing.length === 0) return prev
+      const next = new Set(prev)
+      missing.forEach((k) => next.add(k))
+      return next
+    })
   }, [location.pathname])
 
   const toggleGroup = (label: string) =>
@@ -99,61 +117,67 @@ export function AppLayout({ brand = '송월 QR 공정관리', nav, user, childre
         </div>
         <nav className="flex-1 overflow-y-auto px-2 py-2">
           {nav.map((g, gi) => {
+            const closeOnMobile = () => setOpen(window.innerWidth >= 1024 ? open : false)
+            const renderLink = (it: NavItem, indent = false) => (
+              <NavLink
+                key={it.to}
+                to={it.to}
+                {...(it.end !== undefined ? { end: it.end } : {})}
+                onClick={closeOnMobile}
+                className={({ isActive }) =>
+                  cn(
+                    'flex h-9 items-center gap-2 rounded-ad px-2 text-white/80 hover:bg-white/10 hover:text-white',
+                    indent && 'pl-4 text-[13px]',
+                    isActive && 'bg-white/15 font-semibold text-white',
+                  )
+                }
+              >
+                {it.icon}
+                <span className="truncate">{it.label}</span>
+              </NavLink>
+            )
+
             // 라벨 없는 그룹(대시보드 등 단일 항목)은 아코디언 없이 평범한 링크로 보여준다.
             if (!g.label) {
-              return (
-                <div key={gi} className="mb-1">
-                  {g.items.map((it) => (
-                    <NavLink
-                      key={it.to}
-                      to={it.to}
-                      {...(it.end !== undefined ? { end: it.end } : {})}
-                      onClick={() => setOpen(window.innerWidth >= 1024 ? open : false)}
-                      className={({ isActive }) =>
-                        cn(
-                          'flex h-9 items-center gap-2 rounded-ad px-2 text-white/80 hover:bg-white/10 hover:text-white',
-                          isActive && 'bg-white/15 font-semibold text-white',
-                        )
-                      }
-                    >
-                      {it.icon}
-                      <span className="truncate">{it.label}</span>
-                    </NavLink>
-                  ))}
-                </div>
-              )
+              return <div key={gi} className="mb-1">{g.items.filter((n): n is NavItem => !isSubGroup(n)).map((it) => renderLink(it))}</div>
             }
-            const isOpen = openGroups.has(g.label)
+
+            const groupLabel = g.label
+            const isOpen = openGroups.has(groupLabel)
             return (
               <div key={gi} className="mb-1">
                 <button
                   type="button"
-                  onClick={() => toggleGroup(g.label!)}
+                  onClick={() => toggleGroup(groupLabel)}
                   aria-expanded={isOpen}
                   className="flex h-8 w-full items-center justify-between rounded-ad px-2 text-ad-xs font-semibold text-white/50 uppercase hover:text-white/80"
                 >
-                  <span>{g.label}</span>
+                  <span>{groupLabel}</span>
                   <IconChevronRight size={13} className={cn('transition-transform duration-150', isOpen && 'rotate-90')} />
                 </button>
                 <div className={cn('grid overflow-hidden transition-[grid-template-rows] duration-150 ease-in-out', isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}>
                   <div className="min-h-0">
-                    {g.items.map((it) => (
-                      <NavLink
-                        key={it.to}
-                        to={it.to}
-                        {...(it.end !== undefined ? { end: it.end } : {})}
-                        onClick={() => setOpen(window.innerWidth >= 1024 ? open : false)}
-                        className={({ isActive }) =>
-                          cn(
-                            'flex h-9 items-center gap-2 rounded-ad px-2 text-white/80 hover:bg-white/10 hover:text-white',
-                            isActive && 'bg-white/15 font-semibold text-white',
-                          )
-                        }
-                      >
-                        {it.icon}
-                        <span className="truncate">{it.label}</span>
-                      </NavLink>
-                    ))}
+                    {g.items.map((node, ni) => {
+                      if (!isSubGroup(node)) return renderLink(node)
+                      const key = subKey(groupLabel, node.label)
+                      const subOpen = openGroups.has(key)
+                      return (
+                        <div key={ni}>
+                          <button
+                            type="button"
+                            onClick={() => toggleGroup(key)}
+                            aria-expanded={subOpen}
+                            className="flex h-8 w-full items-center justify-between rounded-ad px-2 pl-3 text-[11.5px] font-medium text-white/45 hover:text-white/75"
+                          >
+                            <span>{node.label}</span>
+                            <IconChevronRight size={11} className={cn('transition-transform duration-150', subOpen && 'rotate-90')} />
+                          </button>
+                          <div className={cn('grid overflow-hidden transition-[grid-template-rows] duration-150 ease-in-out', subOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}>
+                            <div className="min-h-0">{node.items.map((it) => renderLink(it, true))}</div>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               </div>
