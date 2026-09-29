@@ -11,7 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime && echo "Asia/Seoul" > /etc/timezone
 
-WORKDIR /app
+# backend/ 와 infra/ 를 저장소와 같은 형제 디렉터리 구조로 둔다 — 0003 마이그레이션이
+# `Path(__file__).resolve().parents[3]`(= backend/alembic/versions 에서 3단계 위 = 이 /app)
+# 기준으로 `infra/scripts/create_partitions.py` 를 찾기 때문에, backend/ 를 /app 에 바로
+# 풀어버리면(평탄화) 한 단계가 모자라 경로를 못 찾는다(실제로 겪은 배포 실패, 2026-09-29).
+WORKDIR /app/backend
 
 COPY backend/pyproject.toml ./
 # 소스 없이 의존성만 먼저 설치해 레이어 캐시를 살린다.
@@ -19,7 +23,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e . 2>/dev/null || true
 
 COPY backend/ ./
-COPY infra/scripts ./infra/scripts
+COPY infra/scripts /app/infra/scripts
 
 RUN pip install --no-cache-dir -e .
 
