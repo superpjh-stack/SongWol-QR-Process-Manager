@@ -1,0 +1,9 @@
+# 운영 cron 서비스(infra/docker-compose.prod.yml `cron`)가 설치하는 스케줄.
+# 컨테이너 타임존은 Asia/Seoul 로 고정돼 있다(backend/Dockerfile).
+# 형식: 분 시 일 월 요일 명령
+
+# 매일 02:00 KST — DB 덤프 + 도안 파일 rsync (spec §13 RPO 1h, plan §5.4)
+0 2 * * * /app/infra/scripts/backup.sh /backups >> /proc/1/fd/1 2>> /proc/1/fd/2
+
+# 매월 1일 03:00 KST — scan_event 다음 3개월분 파티션 선생성 (plan §5.1)
+0 3 1 * * cd /app && python infra/scripts/create_partitions.py >> /proc/1/fd/1 2>> /proc/1/fd/2
