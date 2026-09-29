@@ -131,6 +131,61 @@ async def test_rework_qty_exceeds_bad_is_409(
     assert res.status_code == 409 and res.json()["code"] == "STATE_CONFLICT"
 
 
+async def test_rework_cumulative_qty_exceeds_bad_is_409(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """DEF-QA1-S4-003 회귀 (중): ``wo.qty_bad`` 는 P30 캐시 컬럼이라 재작업을 해도 줄지 않는다
+    — 단건 검증(``qty > qty_bad``)만으로는 같은 불량분을 여러 번 중복 재작업할 수 있었다.
+    ``wo_route_step.qty_reworked`` 누계 검증(0011)으로 막아야 한다: 30 재작업(성공, 누계 30)
+    → 30 더 재작업(누계 60 > qty_bad 50, 거부) → 나머지 20 재작업(누계 50 = qty_bad, 성공)."""
+    _wo, wo_code, _ev = await _wo_p30_done_with_defect(
+        client, admin_headers, qty_good=450, qty_bad=50
+    )
+
+    res1 = await client.post(
+        f"{API}/wo/{wo_code}/rework",
+        headers=admin_headers,
+        json={"qty": 30, "reason": "1차 재작업", "reinsert_p30": True},
+    )
+    assert res1.status_code == 200, res1.text
+    assert res1.json()["child"]["code"] == f"{wo_code}-A"
+
+    res2 = await client.post(
+        f"{API}/wo/{wo_code}/rework",
+        headers=admin_headers,
+        json={"qty": 30, "reason": "2차 재작업(초과)", "reinsert_p30": True},
+    )
+    assert res2.status_code == 409 and res2.json()["code"] == "STATE_CONFLICT"
+    assert "누계" in res2.json()["message"]
+
+    res3 = await client.post(
+        f"{API}/wo/{wo_code}/rework",
+        headers=admin_headers,
+        json={"qty": 20, "reason": "3차 재작업(잔량)", "reinsert_p30": True},
+    )
+    assert res3.status_code == 200, res3.text
+    assert res3.json()["child"]["code"] == f"{wo_code}-B"
+
+    # 누계가 정확히 qty_bad(50) 에 도달 — wo_route_step.qty_reworked 확인
+    from sqlalchemy import select
+
+    from app.db.models.order import WorkOrder, WoRouteStep
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as s:
+        wo_row = (
+            await s.execute(select(WorkOrder).where(WorkOrder.code == wo_code))
+        ).scalar_one()
+        p30_step = (
+            await s.execute(
+                select(WoRouteStep).where(
+                    WoRouteStep.wo_id == wo_row.id, WoRouteStep.process_code == "P30"
+                )
+            )
+        ).scalar_one()
+        assert p30_step.qty_reworked == 50
+
+
 async def test_rework_requires_manager_role(
     client: AsyncClient, admin_headers: dict[str, str]
 ) -> None:
@@ -384,6 +439,149 @@ async def test_cancel_twice_is_409(client: AsyncClient, admin_headers: dict[str,
         json={"reason": "다시"},
     )
     assert res2.status_code == 409 and res2.json()["code"] == "STATE_CONFLICT"
+
+
+async def test_cancel_second_to_last_succeeds_after_last_cancelled(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """DEF-QA1-S4-002=DEF-QA2-S4-004 회귀 (상): 마지막 이벤트를 취소하면, 취소되기 전까지는
+    "마지막이 아니라서" 409 였던 그 바로 앞 이벤트가 새 "마지막 반영 이벤트"가 되어 취소할 수
+    있어야 한다(수정 전에는 보상된 옛 이벤트가 계속 "마지막"으로 잡혀 영구 취소 불능이었다).
+    ``test_cancel_non_last_event_is_409`` 와 동일하게 P30 을 두 번(부분→완료)에 나눠 이벤트
+    2개를 만든다."""
+    station_id, api_key, eq_code = await _setup_p30_station_and_equipment(client, admin_headers)
+    worker = await _worker_card()
+    p20_station, p20_key = await ensure_station(uniq("T-K-P20-"), type_="KIOSK", process_code="P20")
+    _m, wo = await _issued_wo(client, admin_headers)
+    wo_code = wo["code"]
+
+    recv_body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo_code,
+        action="RECEIVE",
+        qty_good=500,
+        extra={"inspection": "PASS"},
+    )
+    res0 = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=recv_body)
+    assert res0.status_code == 200 and res0.json()["result"] == "OK", res0.text
+
+    body1 = scan_body(
+        station_id=station_id,
+        worker_card=worker,
+        code=wo_code,
+        action="DONE",
+        equipment_code=eq_code,
+        qty_good=200,
+        qty_bad=0,
+        extra={"variance_reason": "1차 부분 완료"},
+    )
+    res1 = await client.post(f"{API}/scan", headers={"X-Station-Key": api_key}, json=body1)
+    assert res1.status_code == 200 and res1.json()["result"] == "WARN", res1.text
+    first_event_uuid = res1.json()["event_uuid"]
+
+    body2 = scan_body(
+        station_id=station_id,
+        worker_card=worker,
+        code=wo_code,
+        action="DONE",
+        equipment_code=eq_code,
+        qty_good=300,
+        qty_bad=0,
+    )
+    res2 = await client.post(f"{API}/scan", headers={"X-Station-Key": api_key}, json=body2)
+    assert res2.status_code == 200 and res2.json()["result"] == "OK", res2.text
+    second_event_uuid = res2.json()["event_uuid"]
+
+    # 아직 두 번째(마지막) 이벤트가 살아있는 동안은 첫 번째 취소가 여전히 409 여야 한다.
+    blocked = await client.post(
+        f"{API}/wo/{wo_code}/events/{first_event_uuid}/cancel",
+        headers=admin_headers,
+        json={"reason": "잘못된 스캔"},
+    )
+    assert blocked.status_code == 409 and blocked.json()["code"] == "STATE_CONFLICT"
+
+    # 마지막(두 번째) 이벤트를 취소 — 성공해야 한다.
+    res_cancel_last = await client.post(
+        f"{API}/wo/{wo_code}/events/{second_event_uuid}/cancel",
+        headers=admin_headers,
+        json={"reason": "잘못된 스캔"},
+    )
+    assert res_cancel_last.status_code == 200, res_cancel_last.text
+
+    # 이제 첫 번째 이벤트가 새 "마지막 반영 이벤트" — 취소가 성공해야 한다(수정 전엔 409).
+    res_cancel_first = await client.post(
+        f"{API}/wo/{wo_code}/events/{first_event_uuid}/cancel",
+        headers=admin_headers,
+        json={"reason": "잘못된 스캔"},
+    )
+    assert res_cancel_first.status_code == 200, res_cancel_first.text
+    p30_final = next(s for s in res_cancel_first.json()["steps"] if s["process_code"] == "P30")
+    assert p30_final["status"] == "WAITING"
+    assert p30_final["qty_good"] is None and p30_final["qty_bad"] is None
+
+
+async def test_cancel_chain_of_three_sequential_events_all_succeed(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """같은 공정에 이벤트 3개(부분완료 2회 + 최종완료 1회)를 쌓은 뒤, 가장 최근 것부터 역순으로
+    3번 연속 취소한다 — 매번 취소 직후 "그 다음으로 최근인 살아있는 이벤트"가 새 마지막이 되어
+    계속 취소할 수 있어야 한다(DEF-QA1-S4-002=DEF-QA2-S4-004 회귀, 2단만이 아니라 체인 전체)."""
+    station_id, api_key, eq_code = await _setup_p30_station_and_equipment(client, admin_headers)
+    worker = await _worker_card()
+    p20_station, p20_key = await ensure_station(uniq("T-K-P20-"), type_="KIOSK", process_code="P20")
+    _m, wo = await _issued_wo(client, admin_headers)
+    wo_code = wo["code"]
+
+    recv_body = scan_body(
+        station_id=p20_station,
+        worker_card=worker,
+        code=wo_code,
+        action="RECEIVE",
+        qty_good=500,
+        extra={"inspection": "PASS"},
+    )
+    res0 = await client.post(f"{API}/scan", headers={"X-Station-Key": p20_key}, json=recv_body)
+    assert res0.status_code == 200 and res0.json()["result"] == "OK", res0.text
+
+    # P30 tolerance_pct = 2.5% (FULL_STEPS) → qty_in 500 기준 허용오차 12.5. 처음 두 스캔은
+    # 허용오차 밖(사유 필요)이라 PARTIAL, 세 번째는 누계가 500 이 되어 허용오차 안 → DONE.
+    event_uuids: list[str] = []
+    for qty_good, extra in (
+        (100, {"variance_reason": "1차 부분 완료"}),
+        (150, {"variance_reason": "2차 부분 완료"}),
+        (250, {}),
+    ):
+        body = scan_body(
+            station_id=station_id,
+            worker_card=worker,
+            code=wo_code,
+            action="DONE",
+            equipment_code=eq_code,
+            qty_good=qty_good,
+            qty_bad=0,
+            extra=extra,
+        )
+        res = await client.post(f"{API}/scan", headers={"X-Station-Key": api_key}, json=body)
+        assert res.status_code == 200, res.text
+        event_uuids.append(res.json()["event_uuid"])
+
+    detail = (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()
+    p30 = next(s for s in detail["steps"] if s["process_code"] == "P30")
+    assert p30["status"] == "DONE" and p30["qty_good"] == 500
+
+    for event_uuid in reversed(event_uuids):
+        res = await client.post(
+            f"{API}/wo/{wo_code}/events/{event_uuid}/cancel",
+            headers=admin_headers,
+            json={"reason": "연쇄 취소"},
+        )
+        assert res.status_code == 200, res.text
+
+    final = (await client.get(f"{API}/wo/{wo_code}", headers=admin_headers)).json()
+    p30_final = next(s for s in final["steps"] if s["process_code"] == "P30")
+    assert p30_final["status"] == "WAITING"
+    assert p30_final["qty_good"] is None and p30_final["qty_bad"] is None
 
 
 async def test_cancel_requires_manager_or_admin_jwt(

@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from starlette.testclient import TestClient
 
 from app.core.checkcode import make_check
-from app.db.session import engine
+from app.db.session import SessionLocal, engine
+from app.domain.board import delay_job
 from tests.conftest import TEST_ADMIN_LOGIN, TEST_ADMIN_PASSWORD, ensure_user, uniq
 from tests.helpers_order import png_bytes
 
@@ -40,9 +41,12 @@ def _login(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
 
 
-def _issue_simple_wo(client: TestClient, headers: dict[str, str]) -> dict[str, object]:
+def _issue_simple_wo(
+    client: TestClient, headers: dict[str, str], *, due_date: str = "2026-10-10"
+) -> dict[str, object]:
     """거래처·품목·라우팅(SCREEN)·수주·도안 확정·발행까지 동기 HTTP 로 직접 만든다
-    (``tests/helpers_order.py`` 는 async 라 이 파일에서 못 쓴다)."""
+    (``tests/helpers_order.py`` 는 async 라 이 파일에서 못 쓴다). ``due_date`` 를 과거로
+    주면 지연 감지 잡(§6.5) 대상 WO 를 만들 수 있다(``test_delay_job_broadcasts_...``)."""
     group = uniq("TG")
     res = client.post(f"{API}/item-groups", headers=headers, json={"code": group, "name": group})
     assert res.status_code == 201, res.text
@@ -102,7 +106,7 @@ def _issue_simple_wo(client: TestClient, headers: dict[str, str]) -> dict[str, o
         json={
             "customer_id": cust["id"],
             "order_date": "2026-10-01",
-            "due_date": "2026-10-10",
+            "due_date": due_date,
             "address_id": addr["id"],
             "lines": [{"item_id": item["id"], "print_method": "SCREEN", "qty": 500}],
         },
@@ -209,6 +213,76 @@ def test_ws_board_snapshot_on_connect_and_wo_updated_after_scan() -> None:
                     assert msg["wo"]["code"] == wo_code
                 else:
                     assert scan_result["requires_approval"] is True
+    finally:
+        asyncio.run(engine.dispose())
+
+
+async def _run_delay_detection() -> delay_job.DelayRunResult:
+    async with SessionLocal() as session:
+        return await delay_job.run_delay_detection(session)
+
+
+def test_delay_job_broadcasts_new_notification_and_skips_on_dedupe() -> None:
+    """DEF-QA2-S4-002 회귀 (중): 지연 감지 잡이 DB 에 알림 행은 만들면서도
+    ``ws/broadcast.py::broadcast_notification()`` 을 부르지 않아 ``/board`` Ticker 가 알림을
+    영영 못 받던 결함. 새로 만든 알림은 커밋 직후 ``notification`` WS 메시지로 브로드캐스트되고,
+    dedupe 로 건너뛴(신규가 아닌) 실행은 아무것도 브로드캐스트하지 않아야 한다.
+
+    ``run_delay_detection`` 은 ``TestClient`` 의 WS 연결과 같은 이벤트루프(포털)에서 돌려야
+    한다 — ``asyncio.run()`` 으로 별도 루프에서 돌리면 ``manager.broadcast()`` 가 다른
+    루프에 붙은 WebSocket 으로 전송을 시도해 실패한다(이 파일 모듈 docstring의 경고와 같은
+    종류의 함정). ``client.portal.call()`` 로 TestClient 자신의 루프에서 실행한다.
+    """
+    _setup_admin()
+    from app.main import app
+
+    try:
+        with TestClient(app) as client:
+            headers = _login(client)
+            past_due = (date.today() - timedelta(days=1)).isoformat()
+            created_a = _issue_simple_wo(client, headers, due_date=past_due)
+            wo_a = created_a["wo"]
+            assert isinstance(wo_a, dict)
+            wo_a_code = wo_a["code"]
+
+            token = headers["Authorization"].split(" ", 1)[1]
+            with client.websocket_connect(f"/ws/board?token={token}") as ws:
+                snap = ws.receive_json()
+                assert snap["type"] == "snapshot"
+
+                assert client.portal is not None
+                first = client.portal.call(_run_delay_detection)
+                assert first.notifications_created >= 1
+
+                msg = ws.receive_json()
+                assert msg["type"] == "notification"
+                assert msg["notification"]["type"] == "DELAY"
+                assert msg["notification"]["target_code"] == wo_a_code
+
+                # 같은 날 재실행 — dedupe 로 새 알림 없음 → 브로드캐스트도 없어야 한다.
+                second = client.portal.call(_run_delay_detection)
+                assert second.notifications_created == 0
+
+                # 새로 지연된 WO 를 하나 더 만들어(issue-wo 자체가 wo_updated 1건을 먼저
+                # 브로드캐스트한다 — 그 다음 메시지가 곧바로 세 번째 실행의 신규 notification
+                # 이어야 한다) 세 번째 실행에서 "진짜 신규" 브로드캐스트를 검증한다. dedupe
+                # 실행(second)이 잘못 브로드캐스트했다면 그 유령 메시지가 큐에 먼저 있어
+                # "다음 메시지 = wo_updated" 단언이 깨진다 — 이렇게 무-브로드캐스트를 검증한다.
+                created_b = _issue_simple_wo(client, headers, due_date=past_due)
+                wo_b = created_b["wo"]
+                assert isinstance(wo_b, dict)
+                wo_b_code = wo_b["code"]
+
+                msg_issue = ws.receive_json()
+                assert msg_issue["type"] == "wo_updated"
+                assert msg_issue["wo"]["code"] == wo_b_code
+
+                third = client.portal.call(_run_delay_detection)
+                assert third.notifications_created >= 1
+
+                msg2 = ws.receive_json()
+                assert msg2["type"] == "notification"
+                assert msg2["notification"]["target_code"] == wo_b_code
     finally:
         asyncio.run(engine.dispose())
 

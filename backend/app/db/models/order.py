@@ -258,6 +258,10 @@ class WoRouteStep(Base):
         BigInteger, ForeignKey("app_user.id", ondelete="RESTRICT")
     )
     variance_reason: Mapped[str | None] = mapped_column(String(200))
+    # 0011 (S4 QA fix, DEF-QA1-S4-003): 이 단계 기준 누적 재작업(E3) 투입 수량. `qty_bad` 는
+    # 발생한 불량 총량, `qty_reworked` 는 그중 이미 재작업 하위 WO 로 소비된 수량 —
+    # `wo_service.rework_wo` 가 `qty_reworked + 신규요청qty > qty_bad` 를 409 로 막는다.
+    qty_reworked: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
 
     work_order: Mapped[WorkOrder] = relationship(back_populates="route_steps")
 

@@ -657,9 +657,19 @@ async def rework_wo(
     wo = await resolve_wo(session, key)
     if wo.status not in REWORKABLE:
         raise state_conflict(f"작업지시 상태 {wo.status} — 재작업 대상이 아닙니다 (B4-03)")
-    if body.qty > wo.qty_bad:
+
+    # DEF-QA1-S4-003 (중, 100% 재현): `wo.qty_bad` 는 P30 캐시 컬럼이라 재작업을 해도 줄지
+    # 않는다 — 이 가드 하나만으로는 같은 불량분을 여러 번(신청마다 매번 `qty <= qty_bad` 만
+    # 통과) 중복 재작업할 수 있었다. `wo_route_step.qty_reworked`(0011)로 "이미 재작업으로
+    # 소비된 누계"를 추적해 그 누계 + 이번 요청이 `qty_bad` 를 넘지 못하도록 막는다(첫 요청은
+    # 누계가 0 이라 기존 단건 검증과 동일하게 동작 — 회귀 없음).
+    parent_steps = await _steps_of(session, wo)
+    p30_step = next((s for s in parent_steps if s.process_code == "P30"), None)
+    already_reworked = (p30_step.qty_reworked if p30_step is not None else 0) or 0
+    if already_reworked + body.qty > wo.qty_bad:
         raise state_conflict(
-            f"재작업 수량({body.qty})이 불량 수량({wo.qty_bad})을 초과할 수 없습니다"
+            f"재작업 수량 누계({already_reworked + body.qty})가 불량 수량({wo.qty_bad})을 "
+            f"초과할 수 없습니다 (이미 재작업 {already_reworked} + 이번 요청 {body.qty})"
         )
 
     used_suffixes = {
@@ -685,7 +695,6 @@ async def rework_wo(
         ) from e
     suffix = child_code.rsplit("-", 1)[-1]
 
-    parent_steps = await _steps_of(session, wo)
     start_code = "P30" if body.reinsert_p30 else "P50"
     start_step = next((s for s in parent_steps if s.process_code == start_code), None)
     if start_step is None:
@@ -739,6 +748,9 @@ async def rework_wo(
         reason=body.reason,
     )
 
+    if p30_step is not None:
+        p30_step.qty_reworked = already_reworked + body.qty
+
     so = await session.get(SalesOrder, wo.so_id)
     assert so is not None
     await session.flush()
@@ -789,6 +801,17 @@ def _wo_step_snapshots(
     )
 
 
+def _not_yet_compensated() -> Any:
+    """이미 다른 (완료된) ``scan_event`` 의 ``compensates_uuid`` 로 지목된 이벤트를 제외하는
+    조건. NULL-safe: ``compensates_uuid IS NOT NULL`` 인 행만 모아 ``NOT IN`` 으로 비교하므로
+    (NULL 을 포함한 ``IN``/``NOT IN`` 3치 논리 함정 없음, 7c4cb61 과 같은 주의). 자기 자신은
+    ``compensates_uuid`` 를 갖지 않는 원본 DONE 이벤트라 자기-매치 걱정은 없다.
+    """
+    return ScanEvent.event_uuid.not_in(
+        select(ScanEvent.compensates_uuid).where(ScanEvent.compensates_uuid.is_not(None))
+    )
+
+
 async def _last_reflected_event(session: AsyncSession, wo_id: int) -> ScanEvent | None:
     """§5.6 "해당 WO 의 마지막 반영 이벤트만". ``scan_event`` 에는 "실제로 상태를 바꿨는지"를
     나타내는 컬럼이 없다(PENDING·NOOP·APPLY 가 전부 같은 스키마다) — ``approval_status`` 가
@@ -796,6 +819,14 @@ async def _last_reflected_event(session: AsyncSession, wo_id: int) -> ScanEvent 
     것을 뺀 나머지 중 가장 최근을 "마지막 반영"으로 본다. 그래도 걸러내지 못하는 극단적인
     동시성 케이스는 실패를 닫힌 쪽(취소 거부)으로 만든다 — 조용히 잘못된 상태를 되돌리는 것보다
     안전하다(보고: E6 리포트 "이벤트 반영 여부 플래그 없음" 참고).
+
+    DEF-QA1-S4-002=DEF-QA2-S4-004 (상, 오케스트레이터 판단 — api-contract §5.6 "마지막 반영
+    이벤트만"은 이미 취소된 이벤트를 제외하고 동적으로 재계산돼야 한다): 이 쿼리는 원래
+    ``compensates_uuid`` 로 이미 보상(취소)된 이벤트를 걸러내지 않았다 — WO 의 마지막 이벤트를
+    한 번 취소하면, 그 보상된 옛 이벤트가 시간순으로는 여전히 가장 최근이라 계속 "마지막 반영
+    이벤트"로 잡혀 해당 WO 가 영구적으로 취소 불능이 됐다(그 이전 이벤트를 취소하려 해도 "마지막
+    반영 이벤트만" 409). ``_not_yet_compensated()`` 로 이미 보상된 이벤트를 제외하면 순차 취소가
+    자연스럽게 가능해진다(취소 → 그 다음으로 최근인 살아있는 이벤트가 새 "마지막"이 됨).
     """
     stmt = (
         select(ScanEvent)
@@ -810,6 +841,7 @@ async def _last_reflected_event(session: AsyncSession, wo_id: int) -> ScanEvent 
             # NULL-safe 비교로 수정.
             ScanEvent.approval_status.is_distinct_from("PENDING"),
             ScanEvent.result_msg.is_distinct_from("이미 처리됨"),
+            _not_yet_compensated(),
         )
         .order_by(ScanEvent.received_at.desc())
         .limit(1)
@@ -891,6 +923,12 @@ async def cancel_wo_event(
         )
         for s in sorted(steps, key=lambda x: x.seq)
     )
+    # DEF-QA1-S4-002: 이 이벤트를 뺀 "생존" 이벤트로 단계를 재구성(replay)할 때, 이미 다른
+    # CANCEL 이벤트로 보상(취소)된 과거 DONE 이벤트를 survivors 에서 빼지 않으면 그 옛 이벤트가
+    # 마치 아직 살아있는 것처럼 재적용돼 조용히 잘못된(취소됐어야 할) 상태로 되살아난다("같은
+    # 공정에서 취소 → 재스캔 → 다시 취소"를 반복하면 100% 재현, QA① 실측).
+    # ``_not_yet_compensated()`` 로 동일하게 제외 — ``_last_reflected_event`` 와 같은 근본
+    # 원인·같은 수정.
     survivors = (
         (
             await session.execute(
@@ -901,6 +939,7 @@ async def cancel_wo_event(
                     ScanEvent.action == "DONE",
                     ScanEvent.result != "REJECT",
                     ScanEvent.event_uuid != ev.event_uuid,
+                    _not_yet_compensated(),
                 )
                 .order_by(ScanEvent.received_at)
             )
