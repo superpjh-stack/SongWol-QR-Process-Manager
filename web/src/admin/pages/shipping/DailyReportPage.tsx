@@ -43,7 +43,7 @@ export function DailyReportPage() {
     <>
       <PageHeader
         title="출하 일보"
-        breadcrumb="포장·출하 › 출하 일보 (ADM-24)"
+        breadcrumb="출하 › 출하 일보 (ADM-24)"
         actions={
           <>
             <Button variant="secondary" className="print:hidden" onClick={() => window.print()}>

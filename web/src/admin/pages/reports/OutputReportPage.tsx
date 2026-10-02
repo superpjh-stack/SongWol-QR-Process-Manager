@@ -76,7 +76,7 @@ export function OutputReportPage() {
     <>
       <PageHeader
         title="실적 집계"
-        breadcrumb="실적·분석 › 실적 집계 (ADM-25)"
+        breadcrumb="현황·실적 › 실적 집계 (ADM-25)"
         actions={
           <Button variant="primary" loading={excel.loading} onClick={() => void excel.mutate(undefined).catch(() => undefined)}>
             Excel 다운로드

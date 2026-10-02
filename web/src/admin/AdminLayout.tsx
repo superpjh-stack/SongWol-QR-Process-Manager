@@ -1,10 +1,30 @@
-/** ADM-L — AppLayout + 역할별 메뉴 + 하단 사용자 영역(이름·역할·로그아웃) */
-import { useNavigate } from 'react-router-dom'
+/** ADM-L — AppLayout + 역할별 메뉴(섹션) + 섹션 탭 + 하단 사용자 영역(이름·역할·로그아웃) */
+import { useEffect } from 'react'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AppLayout, Button } from '@/shared/ui/admin'
-import { useAuth } from '@/shared/hooks'
+import { useApiQuery, useAuth } from '@/shared/hooks'
+import { boardApi } from '@/shared/api'
+import type { Role } from '@/shared/types'
 import { RoleLabel } from '@/shared/labels'
-import { navFor } from './nav'
+import { navFor, type Badges } from './nav'
+import { canRead } from './permissions'
+import { SectionTabs } from './SectionTabs'
 import { RequireAuth } from './guards'
+
+const BADGE_POLL_MS = 60_000
+
+/** 메뉴 배지 — 승인 대기 건수. 대시보드와 같은 조회(`GET /dashboard/summary`)를 같은 키로 써서 캐시를 나눠 쓴다. */
+function useNavBadges(role: Role | null): Badges {
+  const enabled = canRead(role, 'wo.pending')
+  const summary = useApiQuery(['board', 'summary'], () => boardApi.summary(), enabled)
+  useEffect(() => {
+    if (!enabled) return
+    const t = window.setInterval(() => void summary.refetch(), BADGE_POLL_MS)
+    return () => window.clearInterval(t)
+  }, [enabled, summary.refetch])
+  const pending = enabled ? (summary.data?.pending_approvals ?? 0) : 0
+  return pending > 0 ? { '/admin/wo/pending': pending } : {}
+}
 
 function UserBlock() {
   const { user, role, logout } = useAuth()
@@ -33,7 +53,14 @@ function UserBlock() {
 
 function Shell() {
   const { role } = useAuth()
-  return <AppLayout nav={navFor(role)} user={<UserBlock />} />
+  const { pathname } = useLocation()
+  const badges = useNavBadges(role)
+  return (
+    <AppLayout nav={navFor(role, pathname, badges)} user={<UserBlock />}>
+      <SectionTabs badges={badges} />
+      <Outlet />
+    </AppLayout>
+  )
 }
 
 export function AdminLayout() {

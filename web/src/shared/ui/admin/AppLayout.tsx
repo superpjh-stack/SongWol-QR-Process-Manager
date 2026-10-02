@@ -12,7 +12,11 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { cn } from '../cn'
 import { IconChevronRight, IconMenu } from '../icons'
 
-export type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean }
+/**
+ * `active` 를 주면 NavLink 의 경로 일치 대신 그 값으로 강조한다(한 항목이 여러 경로를 대표할 때).
+ * `badge` 는 처리할 건수 — 0 이면 넘기지 않는다.
+ */
+export type NavItem = { to: string; label: string; icon?: ReactNode; end?: boolean; active?: boolean; badge?: number }
 export type NavSubGroup = { label: string; items: NavItem[] }
 export type NavNode = NavItem | NavSubGroup
 export type NavGroup = { label?: string; items: NavNode[] }
@@ -128,12 +132,15 @@ export function AppLayout({ brand = '송월 QR 공정관리', nav, user, childre
                   cn(
                     'flex h-9 items-center gap-2 rounded-ad px-2 text-white/80 hover:bg-white/10 hover:text-white',
                     indent && 'pl-4 text-[13px]',
-                    isActive && 'bg-white/15 font-semibold text-white',
+                    (it.active ?? isActive) && 'bg-white/15 font-semibold text-white',
                   )
                 }
               >
                 {it.icon}
                 <span className="truncate">{it.label}</span>
+                {it.badge ? (
+                  <span className="ml-auto rounded-full bg-status-warn-bg px-1.5 text-ad-xs font-semibold text-status-warn-fg tabular-nums">{it.badge}</span>
+                ) : null}
               </NavLink>
             )
 

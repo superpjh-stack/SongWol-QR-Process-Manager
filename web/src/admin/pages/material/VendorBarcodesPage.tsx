@@ -68,7 +68,7 @@ export function VendorBarcodesPage() {
     <>
       <PageHeader
         title="업체 바코드 매핑"
-        breadcrumb="입고·재고 › 업체 바코드 매핑 (S3-2b)"
+        breadcrumb="자재·재고 › 업체 바코드 매핑 (S3-2b)"
         description="GET /vendor-barcodes — 매핑 정합 확인용 (api-contract admin #32). 해제(deactivate)는 계약에 없는 엔드포인트를 추정 구현했다"
       />
       <ListToolbar params={params} withQ={false}>

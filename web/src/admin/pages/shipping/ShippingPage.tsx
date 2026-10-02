@@ -341,7 +341,7 @@ export function ShippingPage() {
     <>
       <PageHeader
         title="포장·출하 목록"
-        breadcrumb="포장·출하 › 목록 (ADM-22)"
+        breadcrumb="출하 › 목록 (ADM-22)"
         description="일자·거래처·송장·SO 별 출하, 오늘 발송 예정/완료/지연, 송장 매핑 누락 박스, 잔량"
         actions={
           <Button variant="primary" disabled={!canWrite(role, 'shipping.new')} onClick={() => navigate('/admin/shipping/new')}>

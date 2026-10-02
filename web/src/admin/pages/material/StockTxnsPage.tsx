@@ -62,7 +62,7 @@ export function StockTxnsPage() {
 
   return (
     <>
-      <PageHeader title="입출고 이력" breadcrumb="입고·재고 › 입출고 이력 (ADM-21)" description="신규 이력 + IMS 이관 이력을 한 화면에서, 출처 구분 표시 (IMS 엑셀/실사/신규)" />
+      <PageHeader title="입출고 이력" breadcrumb="자재·재고 › 입출고 이력 (ADM-21)" description="신규 이력 + IMS 이관 이력을 한 화면에서, 출처 구분 표시 (IMS 엑셀/실사/신규)" />
       <ListToolbar params={params} withQ={false} withActive={false}>
         <SearchSelect<Item>
           label="품목"

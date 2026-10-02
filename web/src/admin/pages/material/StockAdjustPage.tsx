@@ -74,7 +74,7 @@ export function StockAdjustPage() {
 
   return (
     <>
-      <PageHeader title="재고 조정" breadcrumb="입고·재고 › 재고 조정 (ADM-20)" description="qty_delta 는 ± 허용, 0 은 저장되지 않습니다 (CHECK ≠ 0). audit_log 필수 (spec §13)" />
+      <PageHeader title="재고 조정" breadcrumb="자재·재고 › 재고 조정 (ADM-20)" description="qty_delta 는 ± 허용, 0 은 저장되지 않습니다 (CHECK ≠ 0). audit_log 필수 (spec §13)" />
       {!write ? (
         <ErrorAlert title="접근 권한이 없습니다" message="재고 조정은 ADMIN/MANAGER 만 할 수 있습니다" />
       ) : (

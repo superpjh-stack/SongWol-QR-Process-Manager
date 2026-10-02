@@ -49,7 +49,7 @@ export function AuditLogPage() {
 
   return (
     <>
-      <PageHeader title="감사 로그" breadcrumb="시스템 › 감사 로그 (ADM-30)" description="기준정보·수주 변경 이력 (before/after)" />
+      <PageHeader title="감사 로그" breadcrumb="기준정보 › 감사 로그 (ADM-30)" description="기준정보·수주 변경 이력 (before/after)" />
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <Select
           label="테이블"

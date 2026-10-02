@@ -66,7 +66,6 @@ export const adminRoute: RouteObject = {
     { path: 'shipping/daily', element: guard('shipping', <DailyReportPage />) },
     { path: 'reports/output', element: guard('reports', <OutputReportPage />) },
     { path: 'reports/lead-time', element: later('reports', 'ADM-26', '리드타임 분석', '[S7-4] [확장]') },
-    { path: 'trace', element: later('trace', 'ADM-27', 'LOT 역추적', '[S7-3] [확장]') },
     { path: 'master/customers', element: guard('master.customers', <CustomersPage />) },
     { path: 'master/customers/:id', element: guard('master.customers', <CustomerDetailPage />) },
     { path: 'master/items', element: guard('master.items', <ItemsPage />) },

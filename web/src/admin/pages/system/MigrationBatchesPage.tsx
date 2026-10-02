@@ -62,7 +62,7 @@ export function MigrationBatchesPage() {
 
   return (
     <>
-      <PageHeader title="마이그레이션 현황" breadcrumb="시스템 › 마이그레이션 (ADM-31)" description="엑셀 일괄 등록·IMS 이관 배치. 대사: 원본 = 적재 + 병합 + 건너뜀 + 실패 (+ 무시) (spec §12.5 · F30). 배치 상세·롤백은 [S5]" />
+      <PageHeader title="마이그레이션 현황" breadcrumb="기준정보 › 마이그레이션 (ADM-31)" description="엑셀 일괄 등록·IMS 이관 배치. 대사: 원본 = 적재 + 병합 + 건너뜀 + 실패 (+ 무시) (spec §12.5 · F30). 배치 상세·롤백은 [S5]" />
       <ListToolbar params={params} withQ={false} withActive={false}>
         <Select label="대상" value={params.extra.entity ?? ''} onChange={(e) => params.setExtra('entity', e.target.value)} options={[...IMPORT_ENTITIES.map((e) => ({ value: e, label: ImportEntityLabel[e] })), { value: 'stock_txn', label: 'stock_txn' }]} placeholder="전체" wrapperClassName="w-36" />
         <Select label="상태" value={params.extra.status ?? ''} onChange={(e) => params.setExtra('status', e.target.value)} options={MIGRATION_STATUSES.map((s) => ({ value: s, label: MigrationStatusLabel[s] }))} placeholder="전체" wrapperClassName="w-36" />

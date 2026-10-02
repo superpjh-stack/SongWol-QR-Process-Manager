@@ -76,7 +76,7 @@ export function ShipmentFormPage() {
     <>
       <PageHeader
         title="발송 등록"
-        breadcrumb="포장·출하 › 발송 등록 (ADM-23)"
+        breadcrumb="출하 › 발송 등록 (ADM-23)"
         description="박스 코드 스캔/입력 → 송장번호 → 발송 확정. 같은 SO·같은 송장의 READY 출하가 있으면 합류한다 (api-contract §6.4)"
       />
       {!write ? (

@@ -157,7 +157,7 @@ export function ReceiptsPage() {
 
   return (
     <>
-      <PageHeader title="입고 목록" breadcrumb="입고·재고 › 입고 목록 (ADM-18)" description="입고 건·LOT 조회, 지시수량 대사 상태. 입고 등록은 PDA 전용 (웹 화면 없음)" />
+      <PageHeader title="입고 목록" breadcrumb="자재·재고 › 입고 목록 (ADM-18)" description="입고 건·LOT 조회, 지시수량 대사 상태. 입고 등록은 PDA 전용 (웹 화면 없음)" />
       <ListToolbar params={params} withQ={false} withActive={false}>
         <DateInput label="부터" value={params.extra.from ?? ''} onChange={(e) => params.setExtra('from', e.target.value)} wrapperClassName="w-40" />
         <DateInput label="까지" value={params.extra.to ?? ''} onChange={(e) => params.setExtra('to', e.target.value)} wrapperClassName="w-40" />

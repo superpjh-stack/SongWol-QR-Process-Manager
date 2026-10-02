@@ -58,8 +58,15 @@ export function StockPage() {
     <>
       <PageHeader
         title="재고 현황"
-        breadcrumb="입고·재고 › 재고 현황 (ADM-19)"
+        breadcrumb="자재·재고 › 재고 현황 (ADM-19)"
         description="현재고 = 이관 기초재고 + 입고 − 발송 ± 조정. 창고/위치 구분 없음 (spec A3-05 단일 확인). Excel 내보내기 없음 (§3 #29)"
+        actions={
+          manage ? (
+            <Button variant="primary" onClick={() => navigate('/admin/material/stock/adjust')}>
+              재고 조정
+            </Button>
+          ) : undefined
+        }
       />
       <ListToolbar params={params} withActive={false}>
         <Select

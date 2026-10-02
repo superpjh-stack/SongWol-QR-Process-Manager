@@ -65,7 +65,7 @@ export function NotificationsPage() {
 
   return (
     <>
-      <PageHeader title="알림 이력" breadcrumb="시스템 › 알림 이력 (ADM-29)" description="DELAY·DEFECT·RECEIPT_SHORT·QTY_VARIANCE·APPROVAL_REQUEST·OFFLINE_BACKLOG 알림 이력 및 확인 처리" />
+      <PageHeader title="알림 이력" breadcrumb="현황·실적 › 알림 (ADM-29)" description="DELAY·DEFECT·RECEIPT_SHORT·QTY_VARIANCE·APPROVAL_REQUEST·OFFLINE_BACKLOG 알림 이력 및 확인 처리" />
       {ack.error ? <ApiErrorAlert error={ack.error} className="mb-3" /> : null}
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <Checkbox label="미확인만" checked={unackedOnly} onChange={(e) => params.setExtra('unacked', e.target.checked ? '' : 'false')} />
